@@ -1754,10 +1754,16 @@ def main():
     print(f"🤖 BTC PRO v6.0 Scanner started with {len(TOKENS)} pairs", flush=True)
     # Уведомление только в продакшне (не в dev-окружении)
     if os.environ.get('REPLIT_DEPLOYMENT') == '1':
+        _bot_on = is_bot_enabled()
+        _bot_line = (
+            "🟢 Реальный бот ВКЛЮЧЁН — ищем сигналы!"
+            if _bot_on else
+            "🔒 Реальный бот ВЫКЛЮЧЕН — включи вручную в дашборде"
+        )
         send_telegram(
             f"🚀 Scanner запущен!\n"
             f"📊 Мониторинг {len(TOKENS)} пар...\n"
-            f"🔒 Реальный бот ВЫКЛЮЧЕН — включи вручную в дашборде\n"
+            f"{_bot_line}\n"
             f"🌐 Дашборд активен!"
         )
 
@@ -1861,6 +1867,20 @@ def main():
                 continue
         except Exception:
             pass
+
+        # Проверка свежести свечи: если с момента закрытия последней 4H свечи
+        # прошло >60 мин — нет смысла сканировать, ждём следующую.
+        _utc_now = datetime.now(timezone.utc)
+        _cur_4h_hour = (_utc_now.hour // 4) * 4
+        _last_close = _utc_now.replace(hour=_cur_4h_hour, minute=0, second=0, microsecond=0)
+        _mins_since_close = (_utc_now - _last_close).total_seconds() / 60
+        if _mins_since_close > 60:
+            _next_dt = _last_close + timedelta(hours=4)
+            _sleep_secs = max(30, (_next_dt - _utc_now).total_seconds())
+            _msk_str = datetime.fromtimestamp(_next_dt.timestamp(), TZ_MOSCOW).strftime('%H:%M МСК %d.%m')
+            print(f"⏳ Свеча устарела ({_mins_since_close:.0f} мин назад) — ждём следующей в {_msk_str}", flush=True)
+            time.sleep(_sleep_secs)
+            continue
 
         # Проверяем открытые позиции (trailing stop, закрытие)
         # DCA теперь в _position_monitor_loop (каждые 5 сек, не реже 1 часа между входами)
