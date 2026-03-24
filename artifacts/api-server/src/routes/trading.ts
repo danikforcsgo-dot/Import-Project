@@ -390,9 +390,9 @@ router.post("/live-trading/close-position", async (req, res) => {
     }
     await saveTradingState("live", updatedState);
 
-    try {
-      fs.writeFileSync(LIVE_FILE, JSON.stringify(updatedState, null, 2), "utf-8");
-    } catch {}
+    // Пишем во все кандидатные пути — scanner.py использует /home/runner/workspace/live_trading.json
+    // writeLiveFile пробует все пути поочерёдно, не падает если один недоступен
+    writeLiveFile(updatedState);
 
     res.json({ success: true, balance: newBalance, state: updatedState });
   } catch (err) {

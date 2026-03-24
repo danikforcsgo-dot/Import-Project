@@ -702,8 +702,9 @@ def load_live() -> dict:
                         local_data['enabled'] = db_data['enabled']
                         changed = True
 
-                # Читаем open_positions из live_trading_state (если в файле нет)
-                if not local_data.get('open_positions'):
+                # Читаем open_positions из live_trading_state ТОЛЬКО если ключ ОТСУТСТВУЕТ в файле
+                # (не проверяем пустой список — API сервер намеренно пишет [] при закрытии позиции)
+                if 'open_positions' not in local_data:
                     cur.execute("SELECT data FROM live_trading_state WHERE id = 1")
                     row2 = cur.fetchone()
                     if row2 and row2[0]:
