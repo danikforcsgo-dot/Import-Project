@@ -1,0 +1,13 @@
+{
+  "stats": {
+    "wins": 0,
+    "total": 0,
+    "losses": 0,
+    "total_pnl": 0
+  },
+  "trades": [],
+  "balance": 0,
+  "enabled": false,
+  "open_position": null,
+  "initial_balance": 0
+}

@@ -49,7 +49,7 @@ interface LocalOpenPos {
 
 export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, isToggling, onClosePosition, isClosing }: BotPanelProps) {
   const [confirmClose, setConfirmClose] = useState<string | null>(null);
-  const isEnabled = data.enabled ?? true;
+  const isEnabled = data.enabled ?? false;
   const storedBalance = data.balance ?? 0;
   const balance = exchangeBalance !== undefined && exchangeBalance !== null ? exchangeBalance : storedBalance;
   const openPositions: LocalOpenPos[] = (
