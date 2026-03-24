@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "lmX9sjg_x3XPMdozIw4kX"
+uri = "file://SYSTEM_DESCRIPTION.md"
+type = "text"
+title = "KokojamboTrade — Полное описание системы"
