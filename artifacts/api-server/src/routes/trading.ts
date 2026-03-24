@@ -360,16 +360,29 @@ router.post("/live-trading/close-position", async (req, res) => {
     } catch {}
 
     // 2. Закрываем позицию рыночным ордером
-    const closeResp = await bingxPost("/openApi/swap/v2/trade/order", {
-      symbol: sym,
-      side: isLong ? "SELL" : "BUY",
-      positionSide: isLong ? "LONG" : "SHORT",
-      type: "MARKET",
-      quantity: qty,
-    }, apiKey, secretKey);
+    let bingxAlreadyClosed = false;
+    let bingxErrorMsg = "";
+    try {
+      const closeResp = await bingxPost("/openApi/swap/v2/trade/order", {
+        symbol: sym,
+        side: isLong ? "SELL" : "BUY",
+        positionSide: isLong ? "LONG" : "SHORT",
+        type: "MARKET",
+        quantity: qty,
+      }, apiKey, secretKey);
 
-    if ((closeResp.code as number) !== 0) {
-      return res.status(500).json({ error: `BingX error: ${closeResp.msg}` });
+      const code = closeResp.code as number;
+      if (code !== 0) {
+        // Позиция уже закрыта на бирже — считаем это успехом и чистим дашборд
+        bingxAlreadyClosed = true;
+        bingxErrorMsg = String(closeResp.msg ?? code);
+        req.log.warn({ sym, code, msg: bingxErrorMsg }, "BingX close error — assuming already closed, removing from state");
+      }
+    } catch (closeErr) {
+      // Сетевая ошибка при закрытии — всё равно убираем из дашборда (лучше убрать, чем оставить зависшей)
+      bingxAlreadyClosed = true;
+      bingxErrorMsg = String(closeErr);
+      req.log.warn({ sym, err: bingxErrorMsg }, "BingX close request failed — removing from state anyway");
     }
 
     // 3. Получаем новый баланс с биржи
@@ -377,7 +390,7 @@ router.post("/live-trading/close-position", async (req, res) => {
     const balData = (balResp.data as Record<string, unknown>)?.balance as Record<string, unknown> | undefined;
     const newBalance = balData ? parseFloat(String(balData.availableMargin ?? balData.balance ?? 0)) : null;
 
-    // 4. Убираем закрытую позицию из open_positions
+    // 4. Убираем закрытую позицию из open_positions (всегда — даже если BingX уже закрыл её)
     const closedToken = pos.token as string;
     const remainingPositions = allPositions.filter(p => (p.token as string) !== closedToken);
     const updatedState: Record<string, unknown> = {

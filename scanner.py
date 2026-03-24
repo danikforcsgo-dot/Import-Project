@@ -1874,7 +1874,29 @@ def main():
         # === ВОССТАНОВЛЕНИЕ ПОЗИЦИЙ ПОСЛЕ РЕСТАРТА ===
         # Если BingX имеет открытые позиции, которых нет в стейте — добавляем
         if BINGX_API_KEY:
-            _bingx_pos_list = get_bingx_open_positions()
+            # Различаем успешный ответ (включая пустой список) и ошибку API
+            _bingx_api_ok = False
+            _bingx_pos_list = []
+            try:
+                _raw_resp = bingx_get_api('/openApi/swap/v2/user/positions', {'symbol': ''})
+                if _raw_resp.get('code') == 0:
+                    _bingx_api_ok = True
+                    _bingx_pos_list = [p for p in (_raw_resp.get('data', []) or []) if float(p.get('positionAmt', 0)) != 0]
+                else:
+                    print(f"⚠️ Startup: BingX positions API error {_raw_resp.get('code')} — пропускаем cleanup", flush=True)
+            except Exception as _be:
+                print(f"⚠️ Startup: BingX positions fetch error: {_be} — пропускаем cleanup", flush=True)
+
+            # Очищаем "зомби"-позиции — те что есть в стейте, но BingX их уже не видит
+            # Только если BingX API ответил успешно (иначе можем случайно убрать реальные позиции)
+            if _bingx_api_ok:
+                _bingx_syms = {p.get('symbol', '') for p in _bingx_pos_list}
+                _before = _live_startup.get('open_positions', [])
+                _filtered = [p for p in _before if p.get('bingx_symbol', '') in _bingx_syms]
+                _removed = [p.get('bingx_symbol') for p in _before if p.get('bingx_symbol', '') not in _bingx_syms]
+                if _removed:
+                    print(f"🧹 Startup cleanup: убираем закрытые позиции {_removed} (нет на BingX)", flush=True)
+                    _live_startup['open_positions'] = _filtered
             if _bingx_pos_list:
                 _existing_syms = {p.get('bingx_symbol', '') for p in _live_startup.get('open_positions', [])}
                 _recovered_any = False
