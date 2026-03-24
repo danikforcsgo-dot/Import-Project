@@ -1886,6 +1886,13 @@ def main():
                     _bdir = 'BUY' if _bamt > 0 else 'SELL'
                     _bside = _bp.get('positionSide', 'LONG')
                     _token_rec = _bsym.replace('-', '/') + ':USDT'
+                    # Восстанавливаем dca_entries из trade_history (если было ложное закрытие)
+                    _recovered_dca = 1
+                    for _th in reversed(_live_startup.get('trade_history', [])):
+                        if _th.get('bingx_symbol') == _bsym or _th.get('token') == _token_rec:
+                            _recovered_dca = _th.get('dca_entries', 1)
+                            print(f"⚠️ RECOVERED dca_entries={_recovered_dca} from trade_history for {_bsym}", flush=True)
+                            break
                     _rec_pos = {
                         'token': _token_rec,
                         'direction': _bdir,
@@ -1898,6 +1905,7 @@ def main():
                         'position_value': _bmargin * LIVE_LEVERAGE,
                         'opened_at': datetime.now(TZ_MOSCOW).isoformat(),
                         'bingx_symbol': _bsym,
+                        'dca_entries': _recovered_dca,
                     }
                     if 'open_positions' not in _live_startup:
                         _live_startup['open_positions'] = []
