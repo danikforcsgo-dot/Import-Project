@@ -292,6 +292,55 @@ def edit_telegram(message_id, text):
     except Exception as e:
         print(f"❌ Telegram edit error: {e}", flush=True)
 
+
+def get_current_prices_batch(symbols: list) -> dict:
+    """Получает текущие цены для списка символов через BingX (один запрос)."""
+    prices = {}
+    try:
+        resp = requests.get(
+            "https://open-api.bingx.com/openApi/swap/v2/quote/ticker",
+            timeout=10
+        )
+        if resp.status_code == 200:
+            for t in (resp.json().get("data") or []):
+                raw = t.get("symbol", "")
+                sym = raw.replace("-USDT", "").replace("/USDT:USDT", "").replace("-USDC", "")
+                try:
+                    prices[sym] = float(t.get("lastPrice") or 0)
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"⚠️ Batch price fetch error: {e}", flush=True)
+    return prices
+
+
+def edit_ranking_with_pnl(msg_id: int, ranking_items: list, orig_text: str):
+    """Редактирует сообщение рейтинга — добавляет P&L за прошедшие 4 часа."""
+    if not msg_id or not ranking_items:
+        return
+    syms = [r["sym"] for r in ranking_items]
+    prices = get_current_prices_batch(syms)
+    now_str = datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m')
+    lines = [f"\n━━━━━━━━━━━━━━━━━━━━\n📊 <b>P&L через 4H</b>  [{now_str}]"]
+    for item in ranking_items:
+        sym   = item["sym"]
+        entry = float(item.get("price") or 0)
+        is_long = str(item.get("direction", "")).upper() == "LONG"
+        curr  = prices.get(sym)
+        if not curr or not entry:
+            lines.append(f"  ▫️ <b>{sym}</b>  нет данных")
+            continue
+        chg_pct = (curr - entry) / entry * 100
+        pnl_pct = chg_pct * LIVE_LEVERAGE if is_long else -chg_pct * LIVE_LEVERAGE
+        arrow   = "✅" if pnl_pct >= 0 else "❌"
+        sign    = "+" if pnl_pct >= 0 else ""
+        price_arrow = "↑" if curr > entry else "↓"
+        lines.append(
+            f"  {arrow} <b>{sym}</b>  {price_arrow}${curr:,.4f}  <b>{sign}{pnl_pct:.1f}%</b>"
+        )
+    edit_telegram(msg_id, orig_text + "\n".join(lines))
+    print(f"✏️ Рейтинг обновлён P&L для {len(ranking_items)} пар", flush=True)
+
 # === ПОДТВЕРЖДЕНИЕ СИГНАЛОВ ===
 
 
@@ -1880,8 +1929,26 @@ def main():
             _last_scanned_ts = int(_st_data.get("lastScannedCandleTs", 0))
             _last_ranking_ts = int(_st_data.get("lastRankingCandleTs", 0))
         except Exception:
+            _st_data = {}
             _last_scanned_ts = 0
             _last_ranking_ts = 0
+
+        # P&L-обновление предыдущего рейтинга: редактируем сообщение при открытии новой свечи
+        try:
+            _prev_msg_id   = int(_st_data.get("lastRankingMsgId") or 0)
+            _prev_items    = _st_data.get("lastRankingItems") or []
+            _prev_orig_txt = _st_data.get("lastRankingOrigText") or ""
+            _prev_rank_ts  = int(_st_data.get("lastRankingCandleTs") or 0)
+            if isinstance(_prev_items, str):
+                import json as _json
+                _prev_items = _json.loads(_prev_items)
+            if _prev_msg_id and _prev_items and _prev_orig_txt and 0 < _prev_rank_ts < _cur_candle_ts:
+                print(f"✏️ Обновляю P&L предыдущего рейтинга (msg {_prev_msg_id})...", flush=True)
+                edit_ranking_with_pnl(_prev_msg_id, _prev_items, _prev_orig_txt)
+                update_scanner_status({"lastRankingMsgId": 0, "lastRankingItems": [], "lastRankingOrigText": ""})
+        except Exception as _pnl_err:
+            print(f"⚠️ P&L edit error: {_pnl_err}", flush=True)
+
         if _last_scanned_ts >= _cur_candle_ts:
             _next_dt = _utc_now.replace(hour=_cur_4h_hour, minute=0, second=0, microsecond=0) + timedelta(hours=4)
             _sleep_secs = max(30, (_next_dt - _utc_now).total_seconds())
@@ -2004,44 +2071,57 @@ def main():
                 now_str = datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')
                 rank_lines = []
                 for idx, item in enumerate(ranked):
-                    sig   = item['signal']
-                    sym   = item['sym']
+                    sig     = item['signal']
+                    sym     = item['sym']
                     is_long = sig['signal'] == 'BUY'
-                    dir_e  = '🚀 ЛОНГ' if is_long else '🔴 ШОРТ'
-                    adx_v  = float(sig.get('adx', 0) or 0)
-                    score  = _score(item)
-                    price  = sig['price']
-                    tp     = float(sig.get('tp', 0))
-                    sl     = float(sig.get('sl', 0))
-                    tp_pct = abs((tp - price) / price * 100 * LIVE_LEVERAGE) if tp and price else 0
-                    sl_pct = abs((sl - price) / price * 100 * LIVE_LEVERAGE) if sl and price else 0
+                    dir_e   = '🚀 ЛОНГ' if is_long else '🔴 ШОРТ'
+                    adx_v   = float(sig.get('adx', 0) or 0)
+                    score   = _score(item)
+                    price   = sig['price']
+                    tp      = float(sig.get('tp', 0))
+                    sl      = float(sig.get('sl', 0))
+                    tp_pct  = abs((tp - price) / price * 100 * LIVE_LEVERAGE) if tp and price else 0
+                    sl_pct  = abs((sl - price) / price * 100 * LIVE_LEVERAGE) if sl and price else 0
                     if idx < opening_cnt:
-                        mark = '✅ ОТКРЫВАЕМ'
+                        mark = '✅'
                     elif bot_enabled and slots == 0:
-                        mark = '🔒 нет слотов'
+                        mark = '🔒'
                     else:
                         mark = '⏭️'
+                    num = f"{idx+1}."
                     rank_lines.append(
-                        f"{mark} <b>{idx+1}. {sym}</b>  {dir_e}\n"
-                        f"   💰 ${price:,.4f}  ADX={adx_v:.1f}  score={score:.1f}\n"
-                        f"   TP +{tp_pct:.1f}%  SL -{sl_pct:.1f}%  (×{LIVE_LEVERAGE})"
+                        f"{mark} <b>{num} {sym}</b>  {dir_e}\n"
+                        f"   💰 ${price:,.4f}  ·  ADX {adx_v:.1f}  ·  score {score:.1f}\n"
+                        f"   🎯 TP +{tp_pct:.0f}%  ·  🛡 SL -{sl_pct:.0f}%  ·  ×{LIVE_LEVERAGE}"
                     )
 
                 if bot_enabled and slots > 0:
                     header = f"🏆 <b>Рейтинг сигналов — открываем {opening_cnt}</b>"
                 elif bot_enabled and slots == 0:
-                    header = f"📊 <b>Рейтинг сигналов — нет свободных слотов ({MAX_POSITIONS}/{MAX_POSITIONS})</b>"
+                    header = f"🔒 <b>Рейтинг сигналов — нет слотов ({MAX_POSITIONS}/{MAX_POSITIONS})</b>"
                 else:
-                    header = f"📊 <b>Рейтинг сигналов — бот выключен (не торгуем)</b>"
+                    header = f"⏸️ <b>Рейтинг сигналов — бот выключен</b>"
 
                 consolidated = (
                     f"{header}\n"
                     f"⏰ {now_str}\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    + "\n".join(rank_lines)
+                    + "\n\n".join(rank_lines)
                 )
                 ranking_msg_id = send_telegram(consolidated, force=True)
-                update_scanner_status({"lastRankingCandleTs": _cur_candle_ts})
+
+                # Сохраняем данные для P&L-обновления через 4 часа
+                _ranking_snapshot = [
+                    {"sym": it["sym"], "price": it["signal"]["price"],
+                     "direction": "LONG" if it["signal"]["signal"] == "BUY" else "SHORT"}
+                    for it in ranked
+                ]
+                update_scanner_status({
+                    "lastRankingCandleTs": _cur_candle_ts,
+                    "lastRankingMsgId": ranking_msg_id or 0,
+                    "lastRankingItems": _ranking_snapshot,
+                    "lastRankingOrigText": consolidated,
+                })
                 print(f"📊 Ranked {len(ranked)} signals, {slots} slot(s), opening {opening_cnt}", flush=True)
 
             if _ranking_already_sent:
