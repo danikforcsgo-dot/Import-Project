@@ -277,7 +277,8 @@ router.get("/live-trading/pnl-analysis", async (req, res) => {
 
     const items = raw?.data ?? [];
     let today = 0, week = 0, month = 0;
-    const INCLUDE_TYPES = new Set(["REALIZED_PNL", "FUNDING_FEE", "COMMISSION"]);
+    // TRADING_FEE is the correct type name in BingX API (not COMMISSION)
+    const INCLUDE_TYPES = new Set(["REALIZED_PNL", "FUNDING_FEE", "TRADING_FEE"]);
 
     for (const item of items) {
       if (!INCLUDE_TYPES.has(item.incomeType)) continue;
@@ -288,7 +289,23 @@ router.get("/live-trading/pnl-analysis", async (req, res) => {
       if (ts >= todayStartMs) today += val;
     }
 
-    res.json({ today, week, month });
+    // Fetch current balance for % calculation
+    let currentBalance: number | null = null;
+    try {
+      const balRaw = await bingxGet("/openApi/swap/v2/user/balance", {}, apiKey, secretKey) as { data?: { balance?: { balance?: string; equity?: string } } };
+      const eq = balRaw?.data?.balance?.equity;
+      if (eq) currentBalance = parseFloat(eq);
+    } catch { /* ignore */ }
+
+    const pct = (val: number) => currentBalance && currentBalance > 0 ? (val / currentBalance) * 100 : null;
+
+    res.json({
+      today, week, month,
+      todayPct:  pct(today),
+      weekPct:   pct(week),
+      monthPct:  pct(month),
+      balance:   currentBalance,
+    });
   } catch (err) {
     req.log.warn(err, "pnl-analysis failed");
     res.json({ today: null, week: null, month: null });

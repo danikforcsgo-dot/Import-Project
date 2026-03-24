@@ -8,6 +8,9 @@ interface PnlAnalysis {
   today: number | null;
   week: number | null;
   month: number | null;
+  todayPct: number | null;
+  weekPct: number | null;
+  monthPct: number | null;
 }
 
 interface SignalStats {
@@ -79,28 +82,30 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(diff / 86400)}д`;
 }
 
-function PnlRow({ label, value }: { label: string; value: number | null }) {
+function PnlRow({ label, value, pct }: { label: string; value: number | null; pct?: number | null }) {
   const isLoading = value === null;
   const isPos = (value ?? 0) >= 0;
-  const formatted = isLoading
-    ? "—"
-    : `${isPos ? "+" : ""}${value!.toFixed(2)} USDT`;
+  const color = isLoading ? "text-muted-foreground" : isPos ? "text-success" : "text-danger";
 
   return (
     <div className="flex items-center justify-between">
       <span className="text-xs text-muted-foreground uppercase tracking-widest">{label}</span>
-      <div className="flex items-center gap-1.5">
-        {!isLoading && (
-          isPos
-            ? <TrendingUp className="w-3 h-3 text-success shrink-0" />
-            : <TrendingDown className="w-3 h-3 text-danger shrink-0" />
+      <div className="flex items-center gap-2">
+        {!isLoading && pct != null && (
+          <span className={cn("text-xs font-mono tabular-nums opacity-70", color)}>
+            {isPos ? "+" : ""}{pct.toFixed(2)}%
+          </span>
         )}
-        <span className={cn(
-          "font-mono text-sm font-bold tabular-nums",
-          isLoading ? "text-muted-foreground" : isPos ? "text-success" : "text-danger"
-        )}>
-          {formatted}
-        </span>
+        <div className="flex items-center gap-1">
+          {!isLoading && (
+            isPos
+              ? <TrendingUp className="w-3 h-3 shrink-0 text-success" />
+              : <TrendingDown className="w-3 h-3 shrink-0 text-danger" />
+          )}
+          <span className={cn("font-mono text-sm font-bold tabular-nums", color)}>
+            {isLoading ? "—" : `${isPos ? "+" : ""}${value!.toFixed(2)}`}
+          </span>
+        </div>
       </div>
     </div>
   );
@@ -124,9 +129,9 @@ export function StatisticsPanel() {
       </CardHeader>
       <CardContent className="px-4 pb-3 flex flex-col gap-2.5">
 
-        <PnlRow label="П/У сегодня"  value={pnl?.today  ?? null} />
-        <PnlRow label="П/У за 7 дн." value={pnl?.week   ?? null} />
-        <PnlRow label="П/У за 30 дн." value={pnl?.month  ?? null} />
+        <PnlRow label="П/У сегодня"   value={pnl?.today  ?? null} pct={pnl?.todayPct ?? null} />
+        <PnlRow label="П/У за 7 дн."  value={pnl?.week   ?? null} pct={pnl?.weekPct  ?? null} />
+        <PnlRow label="П/У за 30 дн." value={pnl?.month  ?? null} pct={pnl?.monthPct ?? null} />
 
         <div className="border-t border-border/40 pt-2 flex items-center justify-between">
           <span className="text-xs text-muted-foreground uppercase tracking-widest">
