@@ -1272,7 +1272,30 @@ def _do_check_live_position():
                         open_bx = p
                         break
 
+            if not open_bx:
+                # Повторный запрос через 5 секунд чтобы исключить API-глюк
+                import time as _time; _time.sleep(5)
+                resp2 = bingx_get_api('/openApi/swap/v2/user/positions', {'symbol': sym})
+                if resp2.get('code') == 0:
+                    for p in (resp2.get('data', []) or []):
+                        if p.get('symbol') == sym:
+                            amt = abs(float(p.get('positionAmt', 0) or 0))
+                            if amt > 0:
+                                open_bx = p
+                                break
+                if not open_bx:
+                    prev_missing = pos.get('missing_on_bingx', 0)
+                    if prev_missing < 1:
+                        # Первый раз не нашли — ждём следующей проверки
+                        print(f"⚠️ check_live_position: {sym} не найден на BingX (missing={prev_missing+1}), ждём подтверждения", flush=True)
+                        pos['missing_on_bingx'] = prev_missing + 1
+                        still_open.append(pos)
+                        continue
+                    else:
+                        print(f"⚠️ check_live_position: {sym} не найден {prev_missing+1} раз подряд — закрываем", flush=True)
+
             if open_bx:
+                pos['missing_on_bingx'] = 0
                 current_price = float(open_bx.get('markPrice', 0) or 0)
                 unrealized = float(open_bx.get('unrealizedProfit', 0) or 0)
                 collateral = pos.get('collateral', 1)
