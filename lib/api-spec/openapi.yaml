@@ -1,22 +1,26 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: KokojamboTrade API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: signals
+    description: Trading signals
+  - name: scanner
+    description: Scanner status
+  - name: trading
+    description: Trading state management
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +28,217 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /signals:
+    get:
+      operationId: getSignals
+      tags: [signals]
+      summary: Get all signals
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: List of signals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Signal"
+    post:
+      operationId: createSignal
+      tags: [signals]
+      summary: Create a signal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSignalRequest"
+      responses:
+        "201":
+          description: Signal created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Signal"
+
+  /scanner/status:
+    get:
+      operationId: getScannerStatus
+      tags: [scanner]
+      summary: Get scanner status
+      responses:
+        "200":
+          description: Scanner status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScannerStatus"
+    post:
+      operationId: updateScannerStatus
+      tags: [scanner]
+      summary: Update scanner status
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScannerStatus"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScannerStatus"
+
+  /paper-trading:
+    get:
+      operationId: getPaperTrading
+      tags: [trading]
+      summary: Get paper trading state
+      responses:
+        "200":
+          description: Paper trading state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradingState"
+
+  /paper-trading/sync:
+    post:
+      operationId: syncPaperTrading
+      tags: [trading]
+      summary: Sync paper trading state from scanner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Synced
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradingState"
+
+  /live-trading:
+    get:
+      operationId: getLiveTrading
+      tags: [trading]
+      summary: Get live trading state
+      responses:
+        "200":
+          description: Live trading state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradingState"
+
+  /live-trading/sync:
+    post:
+      operationId: syncLiveTrading
+      tags: [trading]
+      summary: Sync live trading state from scanner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Synced
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradingState"
+
+  /live-trading/toggle:
+    post:
+      operationId: toggleLiveTrading
+      tags: [trading]
+      summary: Enable or disable live trading bot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+              required: [enabled]
+      responses:
+        "200":
+          description: Toggled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradingState"
+
+  /sub-trading:
+    get:
+      operationId: getSubTrading
+      tags: [trading]
+      summary: Get sub trading state
+      responses:
+        "200":
+          description: Sub trading state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradingState"
+
+  /sub-trading/sync:
+    post:
+      operationId: syncSubTrading
+      tags: [trading]
+      summary: Sync sub trading state from scanner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Synced
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradingState"
+
+  /sub-trading/toggle:
+    post:
+      operationId: toggleSubTrading
+      tags: [trading]
+      summary: Enable or disable sub trading bot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+              required: [enabled]
+      responses:
+        "200":
+          description: Toggled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradingState"
+
 components:
   schemas:
     HealthStatus:
@@ -31,6 +246,145 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
+    Signal:
+      type: object
+      properties:
+        id:
+          type: integer
+        symbol:
+          type: string
+        signalType:
+          type: string
+        price:
+          type: number
+        sl:
+          type: number
+        tp:
+          type: number
+        emaFast:
+          type: number
+        emaSlow:
+          type: number
+        adx:
+          type: number
+        atr:
+          type: number
+        sentToTelegram:
+          type: boolean
+        createdAt:
+          type: string
+      required: [id, symbol, signalType, price, createdAt]
+
+    CreateSignalRequest:
+      type: object
+      properties:
+        symbol:
+          type: string
+        signalType:
+          type: string
+        price:
+          type: number
+        sl:
+          type: number
+        tp:
+          type: number
+        emaFast:
+          type: number
+        emaSlow:
+          type: number
+        adx:
+          type: number
+        atr:
+          type: number
+        sentToTelegram:
+          type: boolean
+      required: [symbol, signalType, price]
+
+    ScannerStatus:
+      type: object
+      properties:
+        isScanning:
+          type: boolean
+        isPaused:
+          type: boolean
+        currentSymbol:
+          type: string
+        tokenIndex:
+          type: integer
+        totalTokens:
+          type: integer
+        signalsFoundThisScan:
+          type: integer
+        lastScanTime:
+          type: string
+        lastScanDuration:
+          type: number
+        scanStartTime:
+          type: string
+
+    TradingStats:
+      type: object
+      properties:
+        wins:
+          type: integer
+        losses:
+          type: integer
+        total:
+          type: integer
+        total_pnl:
+          type: number
+
+    TradeRecord:
+      type: object
+      properties:
+        token:
+          type: string
+        direction:
+          type: string
+        entry_price:
+          type: number
+        exit_price:
+          type: number
+        qty:
+          type: number
+        collateral:
+          type: number
+        tp:
+          type: number
+        sl:
+          type: number
+        pnl_usd:
+          type: number
+        pnl_pct:
+          type: number
+        result:
+          type: string
+        opened_at:
+          type: string
+        closed_at:
+          type: string
+        reason:
+          type: string
+
+    TradingState:
+      type: object
+      properties:
+        balance:
+          type: number
+        initial_balance:
+          type: number
+        enabled:
+          type: boolean
+        open_position:
+          type: object
+          nullable: true
+        trades:
+          type: array
+          items:
+            $ref: "#/components/schemas/TradeRecord"
+        stats:
+          $ref: "#/components/schemas/TradingStats"
+        current_balance:
+          type: number
