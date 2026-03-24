@@ -335,7 +335,7 @@ def update_scanner_status(status_data):
 # === ПРОВЕРКА СИГНАЛА ===
 def check_signal(symbol):
     try:
-        bars = _get_exchange().fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=120)
+        bars = _get_exchange().fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=100)
         if not bars or len(bars) < 90:
             return None
 
