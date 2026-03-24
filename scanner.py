@@ -1960,8 +1960,8 @@ def main():
         # Помечаем свечу как "сканируется" ДО начала скана — защита от дублей при краше/перезапуске
         update_scanner_status({"lastScannedCandleTs": _cur_candle_ts})
 
-        # Ждём 2 минуты чтобы биржа финализировала данные закрытой свечи
-        _settle = 120
+        # Ждём 1 минуту чтобы биржа финализировала данные закрытой свечи
+        _settle = 60
         _msk_open = datetime.now(TZ_MOSCOW).strftime('%H:%M МСК')
         print(f"⏳ Новая 4H свеча ({_msk_open}) — ждём {_settle}с пока данные устоятся...", flush=True)
         time.sleep(_settle)
