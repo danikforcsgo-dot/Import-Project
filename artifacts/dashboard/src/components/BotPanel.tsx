@@ -188,7 +188,7 @@ export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, 
                       {(() => {
                         const entries = pos.dca_entries ?? 1;
                         const maxEntries = STRATEGY.maxDca;
-                        const DCA_INTERVAL_SEC = 900;
+                        const DCA_INTERVAL_SEC = 3600;
                         const dcaReady = entries >= maxEntries;
 
                         let dcaStatus: "ready" | "waiting" | "maxed" = "ready";
