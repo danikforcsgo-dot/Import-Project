@@ -178,6 +178,7 @@ def _get_exchange():
                 'adjustForTimeDifference': True,
             },
             'enableRateLimit': False,
+            'timeout': 6000,  # 6 сек таймаут — предотвращает зависание на медленных API
         })
     return _tl.exchange
 
@@ -2019,9 +2020,8 @@ def main():
         time.sleep(_settle)
         print(f"🔍 Начинаем скан после паузы", flush=True)
 
-        # Проверяем открытые позиции (trailing stop, закрытие)
-        # DCA теперь в _position_monitor_loop (каждые 5 сек, не реже 1 часа между входами)
-        check_live_position()
+        # check_live_position() убрана отсюда — она уже запускается в monitor_thread каждые 5 сек
+        # Запуск здесь дублировал работу и добавлял задержку до скана
 
         scan_start = datetime.now()
         scan_signals_this_round = 0
@@ -2037,8 +2037,8 @@ def main():
             "signalsFoundThisScan": 0,
         })
 
-        # Параллельное сканирование — 20 воркеров одновременно (ускоряет с ~1ч до ~2 мин)
-        SCAN_WORKERS = 20
+        # Параллельное сканирование — 30 воркеров + 6с таймаут на запрос = ~30-60 сек на 109 токенов
+        SCAN_WORKERS = 30
         completed_count = 0
         paused_mid_scan = False
         scan_lock = threading.Lock()
@@ -2073,13 +2073,15 @@ def main():
 
                 token, signal = fut.result()
 
-                update_scanner_status({
-                    "isScanning": True,
-                    "currentSymbol": token,
-                    "tokenIndex": _done,
-                    "totalTokens": len(TOKENS),
-                    "signalsFoundThisScan": scan_signals_this_round,
-                })
+                # Обновляем статус каждые 10 токенов чтобы не делать 109 HTTP-запросов за скан
+                if _done % 10 == 0:
+                    update_scanner_status({
+                        "isScanning": True,
+                        "currentSymbol": token,
+                        "tokenIndex": _done,
+                        "totalTokens": len(TOKENS),
+                        "signalsFoundThisScan": scan_signals_this_round,
+                    })
 
                 if signal:
                     now_ms = int(time.time() * 1000)
@@ -2095,6 +2097,10 @@ def main():
                     print(f"✅ {signal['signal']} Signal: {token} @ ${signal['price']:,.6f}", flush=True)
 
                     scan_pending_signals.append({'signal': signal, 'token': token, 'sym': sym_clean})
+
+        # ── Логируем время скана ────────────────────────────────────────────────
+        scan_elapsed = (datetime.now() - scan_start).total_seconds()
+        print(f"⏱️ Скан завершён за {scan_elapsed:.1f}с | {len(TOKENS)} токенов | {scan_signals_this_round} сигналов", flush=True)
 
         # ── Сохраняем кулдауны и ранжируем сигналы ────────────────────────────
         if paused_mid_scan:
