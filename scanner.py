@@ -1868,17 +1868,22 @@ def main():
         except Exception:
             pass
 
-        # Проверка свежести свечи: если с момента закрытия последней 4H свечи
-        # прошло >60 мин — нет смысла сканировать, ждём следующую.
+        # Проверка: не сканировали ли мы уже эту 4H свечу?
+        # Храним timestamp последней просканированной свечи в БД.
+        # Это защищает от дублей при перезапуске бота в середине свечного периода.
         _utc_now = datetime.now(timezone.utc)
         _cur_4h_hour = (_utc_now.hour // 4) * 4
-        _last_close = _utc_now.replace(hour=_cur_4h_hour, minute=0, second=0, microsecond=0)
-        _mins_since_close = (_utc_now - _last_close).total_seconds() / 60
-        if _mins_since_close > 60:
-            _next_dt = _last_close + timedelta(hours=4)
+        _cur_candle_ts = int(_utc_now.replace(hour=_cur_4h_hour, minute=0, second=0, microsecond=0).timestamp())
+        try:
+            _st_r = requests.get(f"{API_BASE}/api/scanner/status", timeout=3)
+            _last_scanned_ts = int(_st_r.json().get("lastScannedCandleTs", 0)) if _st_r.status_code == 200 else 0
+        except Exception:
+            _last_scanned_ts = 0
+        if _last_scanned_ts >= _cur_candle_ts:
+            _next_dt = _utc_now.replace(hour=_cur_4h_hour, minute=0, second=0, microsecond=0) + timedelta(hours=4)
             _sleep_secs = max(30, (_next_dt - _utc_now).total_seconds())
             _msk_str = datetime.fromtimestamp(_next_dt.timestamp(), TZ_MOSCOW).strftime('%H:%M МСК %d.%m')
-            print(f"⏳ Свеча устарела ({_mins_since_close:.0f} мин назад) — ждём следующей в {_msk_str}", flush=True)
+            print(f"✅ Свеча {_cur_4h_hour:02d}:00 UTC уже просканирована — ждём следующей в {_msk_str}", flush=True)
             time.sleep(_sleep_secs)
             continue
 
@@ -2077,6 +2082,10 @@ def main():
         scan_duration = (datetime.now() - scan_start).total_seconds()
         print(f"🔄 Scan complete in {scan_duration:.1f}s | Signals this scan: {scan_signals_this_round} | Total: {signals_found}", flush=True)
 
+        # Сохраняем timestamp просканированной свечи → защита от дублей при перезапуске
+        _done_utc = datetime.now(timezone.utc)
+        _done_4h_hour = (_done_utc.hour // 4) * 4
+        _scanned_candle_ts = int(_done_utc.replace(hour=_done_4h_hour, minute=0, second=0, microsecond=0).timestamp())
         update_scanner_status({
             "isScanning": False,
             "currentSymbol": "",
@@ -2085,6 +2094,7 @@ def main():
             "lastScanDuration": round(scan_duration, 1),
             "lastScanTime": datetime.now().isoformat(),
             "signalsFoundThisScan": scan_signals_this_round,
+            "lastScannedCandleTs": _scanned_candle_ts,
         })
 
         # Спим до следующего закрытия 4H свечи (UTC: 00, 04, 08, 12, 16, 20)
