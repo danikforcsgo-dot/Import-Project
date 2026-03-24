@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { Target, X, TrendingUp, TrendingDown, ShieldAlert, Layers } from "lucide-react";
+import { Target, X, TrendingDown, Layers } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -144,30 +144,7 @@ export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, 
                   ) ?? null;
 
                   const isLong = pos.direction === "BUY";
-                  const entryPrice = pos.entry_price ?? 0;
-                  const tpPrice = pos.tp ?? 0;
-                  const slPrice = pos.sl ?? 0;
-                  const hasSLTP = tpPrice > 0 && slPrice > 0;
                   const currentPrice = pnlEntry?.currentPrice ?? 0;
-
-                  // Progress toward TP (0–100%)
-                  let tpProgress = 0;
-                  if (hasSLTP && currentPrice > 0 && entryPrice > 0) {
-                    if (isLong) {
-                      const range = tpPrice - entryPrice;
-                      tpProgress = range > 0 ? Math.min(100, Math.max(0, ((currentPrice - entryPrice) / range) * 100)) : 0;
-                    } else {
-                      const range = entryPrice - tpPrice;
-                      tpProgress = range > 0 ? Math.min(100, Math.max(0, ((entryPrice - currentPrice) / range) * 100)) : 0;
-                    }
-                  }
-
-                  const tpPct = hasSLTP && entryPrice > 0
-                    ? Math.abs((tpPrice - entryPrice) / entryPrice * 100)
-                    : 0;
-                  const slPct = hasSLTP && entryPrice > 0
-                    ? Math.abs((slPrice - entryPrice) / entryPrice * 100)
-                    : 0;
 
                   return (
                     <motion.div
@@ -196,39 +173,6 @@ export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, 
                           <div className="text-[10px] font-mono text-muted-foreground">×{STRATEGY.leverage} = {formatMoney((pos.collateral ?? 0) * STRATEGY.leverage)}</div>
                         </div>
                       </div>
-
-                      {/* SL / TP levels */}
-                      {hasSLTP ? (
-                        <div className="mb-2 space-y-1">
-                          {/* TP progress bar */}
-                          <div className="flex items-center gap-2">
-                            <TrendingUp className="w-3 h-3 text-success shrink-0" />
-                            <div className="flex-1 h-1.5 bg-background rounded-full overflow-hidden border border-border/40">
-                              <motion.div
-                                className="h-full bg-success rounded-full"
-                                initial={{ width: 0 }}
-                                animate={{ width: `${tpProgress}%` }}
-                                transition={{ duration: 0.6, ease: "easeOut" }}
-                              />
-                            </div>
-                            <span className="text-[10px] font-mono text-success shrink-0">
-                              TP {formatMoney(tpPrice)} <span className="opacity-60">(+{tpPct.toFixed(1)}%)</span>
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <ShieldAlert className="w-3 h-3 text-danger shrink-0" />
-                            <div className="flex-1 h-px bg-danger/30" />
-                            <span className="text-[10px] font-mono text-danger shrink-0">
-                              SL {formatMoney(slPrice)} <span className="opacity-60">(-{slPct.toFixed(1)}%)</span>
-                            </span>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="mb-2 flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/50">
-                          <ShieldAlert className="w-3 h-3" />
-                          <span>SL/TP — данные позиции до обновления</span>
-                        </div>
-                      )}
 
                       {/* DCA Progress */}
                       {(() => {
