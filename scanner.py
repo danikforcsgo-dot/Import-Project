@@ -1876,9 +1876,12 @@ def main():
         _cur_candle_ts = int(_utc_now.replace(hour=_cur_4h_hour, minute=0, second=0, microsecond=0).timestamp())
         try:
             _st_r = requests.get(f"{API_BASE}/api/scanner/status", timeout=3)
-            _last_scanned_ts = int(_st_r.json().get("lastScannedCandleTs", 0)) if _st_r.status_code == 200 else 0
+            _st_data = _st_r.json() if _st_r.status_code == 200 else {}
+            _last_scanned_ts = int(_st_data.get("lastScannedCandleTs", 0))
+            _last_ranking_ts = int(_st_data.get("lastRankingCandleTs", 0))
         except Exception:
             _last_scanned_ts = 0
+            _last_ranking_ts = 0
         if _last_scanned_ts >= _cur_candle_ts:
             _next_dt = _utc_now.replace(hour=_cur_4h_hour, minute=0, second=0, microsecond=0) + timedelta(hours=4)
             _sleep_secs = max(30, (_next_dt - _utc_now).total_seconds())
@@ -1886,6 +1889,9 @@ def main():
             print(f"✅ Свеча {_cur_4h_hour:02d}:00 UTC уже просканирована — ждём следующей в {_msk_str}", flush=True)
             time.sleep(_sleep_secs)
             continue
+
+        # Помечаем свечу как "сканируется" ДО начала скана — защита от дублей при краше/перезапуске
+        update_scanner_status({"lastScannedCandleTs": _cur_candle_ts})
 
         # Проверяем открытые позиции (trailing stop, закрытие)
         # DCA теперь в _position_monitor_loop (каждые 5 сек, не реже 1 часа между входами)
@@ -1989,79 +1995,89 @@ def main():
             opening_cnt = min(slots, len(ranked)) if bot_enabled else 0
 
             # ── Отправляем ЕДИНОЕ сообщение с полным рейтингом ────────────────
-            now_str = datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')
-            rank_lines = []
-            for idx, item in enumerate(ranked):
-                sig   = item['signal']
-                sym   = item['sym']
-                is_long = sig['signal'] == 'BUY'
-                dir_e  = '🚀 ЛОНГ' if is_long else '🔴 ШОРТ'
-                adx_v  = float(sig.get('adx', 0) or 0)
-                score  = _score(item)
-                price  = sig['price']
-                tp     = float(sig.get('tp', 0))
-                sl     = float(sig.get('sl', 0))
-                tp_pct = abs((tp - price) / price * 100 * LIVE_LEVERAGE) if tp and price else 0
-                sl_pct = abs((sl - price) / price * 100 * LIVE_LEVERAGE) if sl and price else 0
-                if idx < opening_cnt:
-                    mark = '✅ ОТКРЫВАЕМ'
+            # Защита от дублей: не отправляем рейтинг дважды за одну 4H свечу
+            _ranking_already_sent = (_last_ranking_ts >= _cur_candle_ts)
+            if _ranking_already_sent:
+                print(f"⏭️ Рейтинг сигналов для свечи {_cur_4h_hour:02d}:00 UTC уже отправлен — пропускаем", flush=True)
+
+            if not _ranking_already_sent:
+                now_str = datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')
+                rank_lines = []
+                for idx, item in enumerate(ranked):
+                    sig   = item['signal']
+                    sym   = item['sym']
+                    is_long = sig['signal'] == 'BUY'
+                    dir_e  = '🚀 ЛОНГ' if is_long else '🔴 ШОРТ'
+                    adx_v  = float(sig.get('adx', 0) or 0)
+                    score  = _score(item)
+                    price  = sig['price']
+                    tp     = float(sig.get('tp', 0))
+                    sl     = float(sig.get('sl', 0))
+                    tp_pct = abs((tp - price) / price * 100 * LIVE_LEVERAGE) if tp and price else 0
+                    sl_pct = abs((sl - price) / price * 100 * LIVE_LEVERAGE) if sl and price else 0
+                    if idx < opening_cnt:
+                        mark = '✅ ОТКРЫВАЕМ'
+                    elif bot_enabled and slots == 0:
+                        mark = '🔒 нет слотов'
+                    else:
+                        mark = '⏭️'
+                    rank_lines.append(
+                        f"{mark} <b>{idx+1}. {sym}</b>  {dir_e}\n"
+                        f"   💰 ${price:,.4f}  ADX={adx_v:.1f}  score={score:.1f}\n"
+                        f"   TP +{tp_pct:.1f}%  SL -{sl_pct:.1f}%  (×{LIVE_LEVERAGE})"
+                    )
+
+                if bot_enabled and slots > 0:
+                    header = f"🏆 <b>Рейтинг сигналов — открываем {opening_cnt}</b>"
                 elif bot_enabled and slots == 0:
-                    mark = '🔒 нет слотов'
+                    header = f"📊 <b>Рейтинг сигналов — нет свободных слотов ({MAX_POSITIONS}/{MAX_POSITIONS})</b>"
                 else:
-                    mark = '⏭️'
-                rank_lines.append(
-                    f"{mark} <b>{idx+1}. {sym}</b>  {dir_e}\n"
-                    f"   💰 ${price:,.4f}  ADX={adx_v:.1f}  score={score:.1f}\n"
-                    f"   TP +{tp_pct:.1f}%  SL -{sl_pct:.1f}%  (×{LIVE_LEVERAGE})"
-                )
+                    header = f"📊 <b>Рейтинг сигналов — бот выключен (не торгуем)</b>"
 
-            if bot_enabled and slots > 0:
-                header = f"🏆 <b>Рейтинг сигналов — открываем {opening_cnt}</b>"
-            elif bot_enabled and slots == 0:
-                header = f"📊 <b>Рейтинг сигналов — нет свободных слотов ({MAX_POSITIONS}/{MAX_POSITIONS})</b>"
+                consolidated = (
+                    f"{header}\n"
+                    f"⏰ {now_str}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    + "\n".join(rank_lines)
+                )
+                ranking_msg_id = send_telegram(consolidated, force=True)
+                update_scanner_status({"lastRankingCandleTs": _cur_candle_ts})
+                print(f"📊 Ranked {len(ranked)} signals, {slots} slot(s), opening {opening_cnt}", flush=True)
+
+            if _ranking_already_sent:
+                print(f"⏭️ Открытие позиций пропущено — рейтинг этой свечи уже обработан", flush=True)
             else:
-                header = f"📊 <b>Рейтинг сигналов — бот выключен (не торгуем)</b>"
+                # Followup-трекинг для выбранных сигналов (отдельное сообщение на каждый)
+                for idx, item in enumerate(ranked[:opening_cnt]):
+                    sig = item['signal']
+                    sym = item['sym']
+                    is_long = sig['signal'] == 'BUY'
+                    fwd_msg = (
+                        f"{'🚀 ЛОНГ' if is_long else '🔴 ШОРТ'} — <b>ОТКРЫВАЕМ</b>\n"
+                        f"📊 <b>{sym}</b>  💰 ${sig['price']:,.4f}"
+                    )
+                    fwd_id = send_telegram(fwd_msg, force=True)
+                    add_signal_followup(fwd_id, item['token'], sig['signal'], sig['price'], fwd_msg)
 
-            consolidated = (
-                f"{header}\n"
-                f"⏰ {now_str}\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                + "\n".join(rank_lines)
-            )
-            ranking_msg_id = send_telegram(consolidated, force=True)
-            print(f"📊 Ranked {len(ranked)} signals, {slots} slot(s), opening {opening_cnt}", flush=True)
-
-            # Followup-трекинг для выбранных сигналов (отдельное сообщение на каждый)
-            for idx, item in enumerate(ranked[:opening_cnt]):
-                sig = item['signal']
-                sym = item['sym']
-                is_long = sig['signal'] == 'BUY'
-                fwd_msg = (
-                    f"{'🚀 ЛОНГ' if is_long else '🔴 ШОРТ'} — <b>ОТКРЫВАЕМ</b>\n"
-                    f"📊 <b>{sym}</b>  💰 ${sig['price']:,.4f}"
-                )
-                fwd_id = send_telegram(fwd_msg, force=True)
-                add_signal_followup(fwd_id, item['token'], sig['signal'], sig['price'], fwd_msg)
-
-            if bot_enabled:
-                for item in ranked[:slots]:
-                    # Перепроверяем enabled прямо перед каждым открытием.
-                    # is_bot_enabled() читает из DB через API — работает и в dev и в prod.
-                    if not is_bot_enabled():
-                        sym = item['token'].replace('/USDT:USDT','').replace('/USDC:USDC','')
-                        print(f"🔒 Открытие {sym} отменено — бот выключен (DB)", flush=True)
-                        break
-                    try:
-                        _sr = requests.get(f"{API_BASE}/api/scanner/status", timeout=2)
-                        if _sr.status_code == 200 and _sr.json().get("isPaused", False):
+                if bot_enabled:
+                    for item in ranked[:slots]:
+                        # Перепроверяем enabled прямо перед каждым открытием.
+                        # is_bot_enabled() читает из DB через API — работает и в dev и в prod.
+                        if not is_bot_enabled():
                             sym = item['token'].replace('/USDT:USDT','').replace('/USDC:USDC','')
-                            print(f"⏸️ Открытие {sym} отменено — спящий режим активирован", flush=True)
+                            print(f"🔒 Открытие {sym} отменено — бот выключен (DB)", flush=True)
                             break
-                    except Exception:
-                        pass
-                    open_live_position(item['signal'], item['token'], live_state)
-            else:
-                print(f"⏸️ Live trading paused — skipping {len(scan_pending_signals)} pending signals", flush=True)
+                        try:
+                            _sr = requests.get(f"{API_BASE}/api/scanner/status", timeout=2)
+                            if _sr.status_code == 200 and _sr.json().get("isPaused", False):
+                                sym = item['token'].replace('/USDT:USDT','').replace('/USDC:USDC','')
+                                print(f"⏸️ Открытие {sym} отменено — спящий режим активирован", flush=True)
+                                break
+                        except Exception:
+                            pass
+                        open_live_position(item['signal'], item['token'], live_state)
+                else:
+                    print(f"⏸️ Live trading paused — skipping {len(scan_pending_signals)} pending signals", flush=True)
 
         # Check if we broke out of the loop due to pause
         try:
