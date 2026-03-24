@@ -1960,6 +1960,13 @@ def main():
         # Помечаем свечу как "сканируется" ДО начала скана — защита от дублей при краше/перезапуске
         update_scanner_status({"lastScannedCandleTs": _cur_candle_ts})
 
+        # Ждём 2 минуты чтобы биржа финализировала данные закрытой свечи
+        _settle = 120
+        _msk_open = datetime.now(TZ_MOSCOW).strftime('%H:%M МСК')
+        print(f"⏳ Новая 4H свеча ({_msk_open}) — ждём {_settle}с пока данные устоятся...", flush=True)
+        time.sleep(_settle)
+        print(f"🔍 Начинаем скан после паузы", flush=True)
+
         # Проверяем открытые позиции (trailing stop, закрытие)
         # DCA теперь в _position_monitor_loop (каждые 5 сек, не реже 1 часа между входами)
         check_live_position()
