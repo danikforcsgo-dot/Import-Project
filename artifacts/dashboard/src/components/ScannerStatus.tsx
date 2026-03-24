@@ -18,6 +18,7 @@ export function ScannerStatus() {
   }
 
   const isScanning = status.isScanning && !status.isPaused;
+  const isWaiting = !isScanning && !status.isPaused;
   const progress = status.totalTokens ? (status.tokenIndex! / status.totalTokens!) * 100 : 0;
 
   return (
@@ -46,19 +47,45 @@ export function ScannerStatus() {
               <div className="flex items-center gap-1.5">
                 <Target className="w-3 h-3 text-primary" />
                 <span className="text-muted-foreground">SCANNING:</span>
-                <span className="text-foreground font-bold">{status.currentSymbol || "WAITING"}</span>
+                <span className={`font-bold ${isWaiting ? "text-primary animate-pulse" : "text-foreground"}`}>
+                  {status.currentSymbol || "WAITING"}
+                </span>
               </div>
               <span className="text-muted-foreground text-xs">
                 {status.tokenIndex || 0} / {status.totalTokens || 0}
               </span>
             </div>
-            <div className="h-1.5 w-full bg-background rounded-full overflow-hidden border border-border/50">
-              <motion.div
-                className="h-full bg-primary"
-                initial={{ width: 0 }}
-                animate={{ width: `${progress}%` }}
-                transition={{ duration: 0.5, ease: "easeInOut" }}
-              />
+
+            {/* Progress bar */}
+            <div className="h-1.5 w-full bg-background rounded-full overflow-hidden border border-border/50 relative">
+              {isScanning ? (
+                /* Active scan — filled progress */
+                <motion.div
+                  className="h-full bg-primary"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${progress}%` }}
+                  transition={{ duration: 0.5, ease: "easeInOut" }}
+                />
+              ) : isWaiting ? (
+                /* WAITING — бегущая полоска */
+                <motion.div
+                  className="h-full absolute top-0 left-0 rounded-full"
+                  style={{
+                    width: "30%",
+                    background: "linear-gradient(90deg, transparent, hsl(var(--primary) / 0.8), transparent)",
+                  }}
+                  animate={{ x: ["0%", "234%", "0%"] }}
+                  transition={{
+                    duration: 2.2,
+                    ease: "easeInOut",
+                    repeat: Infinity,
+                    repeatType: "loop",
+                  }}
+                />
+              ) : (
+                /* Paused — dim static bar */
+                <div className="h-full bg-primary/20 w-full" />
+              )}
             </div>
           </div>
         </div>
