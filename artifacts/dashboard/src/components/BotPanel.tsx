@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { formatMoney, formatPercent, cn } from "@/lib/utils";
 import type { TradingState } from "@workspace/api-client-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface PositionPnlEntry {
   symbol: string;
@@ -62,8 +62,18 @@ const STRATEGY = {
   timeframe: "4H",
 };
 
+function useTick(intervalMs = 1000) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
 export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, isToggling, onClosePosition, isClosing }: BotPanelProps) {
   const [confirmClose, setConfirmClose] = useState<string | null>(null);
+  const now = useTick(1000);
   const isEnabled = data.enabled ?? false;
   const storedBalance = data.balance ?? 0;
   const balance = exchangeBalance !== undefined && exchangeBalance !== null ? exchangeBalance : storedBalance;
@@ -179,18 +189,26 @@ export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, 
                         const entries = pos.dca_entries ?? 1;
                         const maxEntries = STRATEGY.maxDca;
                         const DCA_INTERVAL_SEC = 900;
-                        let nextDcaLabel = "";
-                        if (pos.last_dca_at) {
-                          const elapsed = (Date.now() - new Date(pos.last_dca_at).getTime()) / 1000;
-                          const remaining = Math.max(0, DCA_INTERVAL_SEC - elapsed);
-                          if (remaining > 0) {
-                            const h = Math.floor(remaining / 3600);
-                            const m = Math.floor((remaining % 3600) / 60);
-                            nextDcaLabel = h > 0 ? `через ${h}ч ${m}м` : `через ${m}м`;
-                          } else {
-                            nextDcaLabel = "готов";
-                          }
+                        const dcaReady = entries >= maxEntries;
+
+                        let dcaStatus: "ready" | "waiting" | "maxed" = "ready";
+                        let dcaRemainSec = 0;
+                        if (dcaReady) {
+                          dcaStatus = "maxed";
+                        } else if (pos.last_dca_at) {
+                          const elapsed = (now - new Date(pos.last_dca_at).getTime()) / 1000;
+                          dcaRemainSec = Math.max(0, DCA_INTERVAL_SEC - elapsed);
+                          dcaStatus = dcaRemainSec <= 0 ? "ready" : "waiting";
                         }
+
+                        const fmtDca = (sec: number) => {
+                          const h = Math.floor(sec / 3600);
+                          const m = Math.floor((sec % 3600) / 60);
+                          const s = Math.floor(sec % 60);
+                          if (h > 0) return `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+                          return `${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+                        };
+
                         return (
                           <div className="mb-2">
                             <div className="flex items-center gap-2 mb-1">
@@ -210,14 +228,19 @@ export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, 
                               </div>
                               <span className="text-xs font-mono font-bold shrink-0">{entries}/{maxEntries}</span>
                             </div>
-                            {nextDcaLabel && (
-                              <div className="text-xs text-muted-foreground font-mono text-right">
-                                {nextDcaLabel === "готов"
-                                  ? <span className="text-warning">⚡ DCA готов</span>
-                                  : <span>⏳ след. DCA {nextDcaLabel}</span>
-                                }
-                              </div>
-                            )}
+                            <div className="flex items-center justify-between mt-1">
+                              <span className="text-xs text-muted-foreground font-mono uppercase tracking-wide">След. DCA</span>
+                              <span className={cn(
+                                "text-xs font-mono font-bold px-1.5 py-0.5 rounded",
+                                dcaStatus === "ready" && "bg-warning/15 text-warning",
+                                dcaStatus === "waiting" && "bg-muted/50 text-muted-foreground",
+                                dcaStatus === "maxed" && "bg-muted/30 text-muted-foreground/60",
+                              )}>
+                                {dcaStatus === "ready" && "⚡ ГОТОВ"}
+                                {dcaStatus === "waiting" && `⏳ ${fmtDca(dcaRemainSec)}`}
+                                {dcaStatus === "maxed" && "✓ макс. записей"}
+                              </span>
+                            </div>
                           </div>
                         );
                       })()}
