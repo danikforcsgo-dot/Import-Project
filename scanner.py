@@ -490,6 +490,23 @@ def save_pending_signals(pending: dict):
     except Exception as e:
         print(f"⚠️ Could not save pending_signals: {e}", flush=True)
 
+# === ФАЙЛОВЫЙ БЭКАП lastScannedCandleTs (переживает рестарт) ===
+LAST_SCANNED_FILE = "last_scanned_candle.txt"
+
+def _read_last_scanned_ts_file() -> int:
+    try:
+        with open(LAST_SCANNED_FILE, "r") as f:
+            return int(f.read().strip())
+    except Exception:
+        return 0
+
+def _write_last_scanned_ts_file(ts: int):
+    try:
+        with open(LAST_SCANNED_FILE, "w") as f:
+            f.write(str(ts))
+    except Exception as e:
+        print(f"⚠️ Could not write last_scanned_candle.txt: {e}", flush=True)
+
 # === FOLLOWUP АПДЕЙТЫ СИГНАЛОВ ЧЕРЕЗ 1 ЧАС ===
 SIGNAL_FOLLOWUPS_FILE = "signal_followups.json"
 FOLLOWUP_DELAY_MS = 3600 * 1000  # 1 час
@@ -1932,6 +1949,9 @@ def main():
             _st_data = {}
             _last_scanned_ts = 0
             _last_ranking_ts = 0
+        # Файловый бэкап — защита от потери значения при рестарте сервера
+        _file_ts = _read_last_scanned_ts_file()
+        _last_scanned_ts = max(_last_scanned_ts, _file_ts)
 
         # P&L-обновление предыдущего рейтинга: редактируем сообщение при открытии новой свечи
         try:
@@ -1958,6 +1978,7 @@ def main():
             continue
 
         # Помечаем свечу как "сканируется" ДО начала скана — защита от дублей при краше/перезапуске
+        _write_last_scanned_ts_file(_cur_candle_ts)  # файловый бэкап — моментально
         update_scanner_status({"lastScannedCandleTs": _cur_candle_ts})
 
         # Ждём 1 минуту чтобы биржа финализировала данные закрытой свечи
