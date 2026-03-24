@@ -2091,8 +2091,7 @@ def main():
                     num = f"{idx+1}."
                     rank_lines.append(
                         f"{mark} <b>{num} {sym}</b>  {dir_e}\n"
-                        f"   💰 ${price:,.4f}  ·  ADX {adx_v:.1f}  ·  score {score:.1f}\n"
-                        f"   🎯 TP +{tp_pct:.0f}%  ·  🛡 SL -{sl_pct:.0f}%  ·  ×{LIVE_LEVERAGE}"
+                        f"   ADX {adx_v:.1f}  ·  score {score:.1f}"
                     )
 
                 if bot_enabled and slots > 0:
