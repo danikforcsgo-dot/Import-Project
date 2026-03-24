@@ -1,0 +1,37 @@
+FROM node:24-alpine AS builder
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY lib lib
+COPY artifacts/api-server artifacts/api-server
+COPY artifacts/dashboard artifacts/dashboard
+
+RUN corepack enable pnpm && pnpm install --frozen-lockfile
+
+RUN PORT=8080 BASE_PATH=/ pnpm --filter @workspace/api-server run build
+
+RUN PORT=23183 BASE_PATH=/ pnpm --filter @workspace/dashboard run build
+
+FROM node:24-alpine
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+RUN corepack enable pnpm
+
+COPY --from=builder /app/artifacts/api-server/dist ./api/dist
+COPY --from=builder /app/artifacts/dashboard/dist/public ./dashboard/public
+
+COPY artifacts/api-server/package.json ./api/
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+
+RUN pnpm install --frozen-lockfile --prod
+
+EXPOSE 8080
+
+ENV PORT=8080
+ENV BASE_PATH=/
+
+CMD ["sh", "-c", "cp -r dashboard/public/* api/dist/ && node api/index.cjs"]
