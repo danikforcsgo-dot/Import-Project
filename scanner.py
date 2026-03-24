@@ -1880,8 +1880,8 @@ def main():
             "signalsFoundThisScan": 0,
         })
 
-        # Параллельное сканирование — 8 воркеров одновременно (ускоряет с ~1ч до ~5 мин)
-        SCAN_WORKERS = 8
+        # Параллельное сканирование — 20 воркеров одновременно (ускоряет с ~1ч до ~2 мин)
+        SCAN_WORKERS = 20
         completed_count = 0
         paused_mid_scan = False
         scan_lock = threading.Lock()
