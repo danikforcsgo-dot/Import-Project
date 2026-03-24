@@ -2067,9 +2067,17 @@ def main():
             "signalsFoundThisScan": scan_signals_this_round,
         })
 
-        # Сканируем каждую минуту
-        print(f"⏰ Следующий скан через 60 сек", flush=True)
-        time.sleep(60)
+        # Спим до следующего закрытия 4H свечи (UTC: 00, 04, 08, 12, 16, 20)
+        _now_utc = datetime.now(timezone.utc)
+        _cur_4h  = (_now_utc.hour // 4) * 4
+        _next_4h = _cur_4h + 4
+        _next_dt = _now_utc.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(hours=_next_4h)
+        if _next_dt <= _now_utc:
+            _next_dt += timedelta(hours=4)
+        _sleep_secs = max(30, (_next_dt - _now_utc).total_seconds())
+        _msk_str = datetime.fromtimestamp(_next_dt.timestamp(), TZ_MOSCOW).strftime('%H:%M МСК  %d.%m')
+        print(f"⏳ Следующий скан в {_msk_str} (через {_sleep_secs/60:.0f} мин — новая 4H свеча)", flush=True)
+        time.sleep(_sleep_secs)
 
 if __name__ == '__main__':
     main()
