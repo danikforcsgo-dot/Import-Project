@@ -743,6 +743,20 @@ def save_live(state: dict):
     threading.Thread(target=_sync, daemon=True).start()
 
 
+def is_bot_enabled() -> bool:
+    """Проверяет enabled через API (DB) — главный авторитет.
+    Файл live_trading.json в продакшене может быть недоступен для записи,
+    поэтому читаем из базы данных через локальный API-сервер."""
+    try:
+        r = requests.get(f"{API_BASE}/api/live-trading", timeout=3)
+        if r.status_code == 200:
+            return bool(r.json().get('enabled', False))
+    except Exception:
+        pass
+    # Fallback: файл (работает в dev)
+    return load_live().get('enabled', False)
+
+
 def has_bingx_open_position() -> bool:
     """Проверяет BingX напрямую — есть ли хоть одна открытая позиция."""
     try:
@@ -1934,7 +1948,7 @@ def main():
 
         if scan_pending_signals:
             live_state = load_live()
-            bot_enabled = live_state.get('enabled', False)
+            bot_enabled = is_bot_enabled()  # читает из DB через API — не зависит от файла
 
             def _score(item):
                 sig = item['signal']
@@ -2006,25 +2020,11 @@ def main():
 
             if bot_enabled:
                 for item in ranked[:slots]:
-                    # Перепроверяем enabled и isPaused прямо перед каждым открытием.
-                    # Проверяем ОБА источника: дев-БД и продакшн API (разные БД!).
-                    _pre_check = load_live()
-                    _enabled_local = _pre_check.get('enabled', False)
-
-                    # Проверяем продакшн API (dashboard URL) — пользователь жмёт кнопку там
-                    _enabled_prod = True  # по умолчанию разрешаем, если API недоступен
-                    if DASHBOARD_URL and not _IS_PROD:
-                        try:
-                            _prod_r = requests.get(f"{DASHBOARD_URL}/api/live-trading", timeout=3, verify=False)
-                            if _prod_r.status_code == 200:
-                                _enabled_prod = _prod_r.json().get('enabled', True)
-                        except Exception:
-                            pass
-
-                    if not _enabled_local or not _enabled_prod:
+                    # Перепроверяем enabled прямо перед каждым открытием.
+                    # is_bot_enabled() читает из DB через API — работает и в dev и в prod.
+                    if not is_bot_enabled():
                         sym = item['token'].replace('/USDT:USDT','').replace('/USDC:USDC','')
-                        src = "дев" if not _enabled_local else "продакшн"
-                        print(f"🔒 Открытие {sym} отменено — бот выключен [{src}]", flush=True)
+                        print(f"🔒 Открытие {sym} отменено — бот выключен (DB)", flush=True)
                         break
                     try:
                         _sr = requests.get(f"{API_BASE}/api/scanner/status", timeout=2)

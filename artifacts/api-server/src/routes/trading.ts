@@ -52,10 +52,30 @@ async function bingxGet(path: string, params: Record<string, string | number>, a
 
 const router: IRouter = Router();
 
-// Файл, куда scanner.py пишет стейт (относительно workspace root)
-// API-сервер запускается из artifacts/api-server/, поэтому используем ../../
-const LIVE_FILE = path.resolve(process.cwd(), "../../live_trading.json");
-const LIVE_FILE_LOCAL = path.resolve(process.cwd(), "live_trading.json");
+// Файл, куда scanner.py пишет стейт.
+// Пробуем несколько мест — путь зависит от окружения (dev vs prod).
+const _cwd = process.cwd();
+const LIVE_FILE_CANDIDATES = [
+  path.resolve(_cwd, "../../live_trading.json"),           // dev: из dist/  → workspace root
+  path.resolve(_cwd, "../../../live_trading.json"),         // prod: глубже
+  path.resolve(_cwd, "live_trading.json"),                  // запуск из workspace root
+  "/home/runner/workspace/live_trading.json",               // абсолютный путь Replit
+];
+const LIVE_FILE = LIVE_FILE_CANDIDATES[0];
+const LIVE_FILE_LOCAL = LIVE_FILE_CANDIDATES[2];
+
+function writeLiveFile(data: unknown): boolean {
+  const json = JSON.stringify(data, null, 2);
+  for (const candidate of LIVE_FILE_CANDIDATES) {
+    try {
+      fs.writeFileSync(candidate, json, "utf-8");
+      return true;
+    } catch {
+      // пробуем следующий
+    }
+  }
+  return false;
+}
 
 function loadFromFile(file: string): Record<string, unknown> | null {
   try {
@@ -145,15 +165,8 @@ router.post("/live-trading/sync", async (req, res) => {
 
     await saveTradingState("live", incoming);
 
-    // Обновляем файл — GET /live-trading читает его первым (в т.ч. в проде).
-    // Без этого задеплоенный live_trading.json перекрывает свежие данные из БД.
-    try {
-      fs.writeFileSync(LIVE_FILE, JSON.stringify(incoming, null, 2), "utf-8");
-    } catch {
-      try {
-        fs.writeFileSync(LIVE_FILE_LOCAL, JSON.stringify(incoming, null, 2), "utf-8");
-      } catch {}
-    }
+    // Обновляем файл — используем writeLiveFile с перебором путей.
+    writeLiveFile(incoming);
 
     res.json(incoming);
   } catch (err) {
@@ -171,13 +184,10 @@ router.post("/live-trading/toggle", async (req, res) => {
     state.enabled = enabled;
     await saveTradingState("live", state);
 
-    // 2. Критично: записываем enabled в JSON-файл, который читает scanner.py
-    try {
-      fs.writeFileSync(LIVE_FILE, JSON.stringify(state, null, 2), "utf-8");
-      req.log.info(`Bot toggled: enabled=${enabled}, wrote to ${LIVE_FILE}`);
-    } catch (fileErr) {
-      req.log.warn(fileErr, "Could not write enabled flag to live_trading.json");
-    }
+    // 2. Записываем enabled в JSON-файл (scanner.py читает его как fallback).
+    // writeLiveFile пробует несколько путей — не падает если один недоступен.
+    const wrote = writeLiveFile(state);
+    req.log.info(`Bot toggled: enabled=${enabled}, file_write=${wrote}`);
 
     // 4. Уведомление в Telegram
     try {
