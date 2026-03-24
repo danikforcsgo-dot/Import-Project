@@ -2060,6 +2060,23 @@ def main():
             "signalsFoundThisScan": 0,
         })
 
+        # Собираем токены у которых была закрытая сделка сегодня (МСК) — они пропускаются в этом скане
+        _traded_today: set = set()
+        try:
+            _st = load_live()
+            _today_str = datetime.now(TZ_MOSCOW).strftime('%Y-%m-%d')
+            for _tr in _st.get('trades', []):
+                _cat = _tr.get('closed_at', '')
+                if _cat.startswith(_today_str):
+                    _tok = _tr.get('token', '')
+                    if _tok:
+                        _traded_today.add(_tok)
+            if _traded_today:
+                _names = [t.replace('/USDT:USDT','').replace('/USDC:USDC','') for t in _traded_today]
+                print(f"🚫 Токены без сигналов сегодня (уже в сделке): {', '.join(_names)}", flush=True)
+        except Exception:
+            pass
+
         # Параллельное сканирование — 30 воркеров + 6с таймаут на запрос = ~30-60 сек на 109 токенов
         SCAN_WORKERS = 30
         completed_count = 0
@@ -2109,6 +2126,11 @@ def main():
                 if signal:
                     now_ms = int(time.time() * 1000)
                     if token in sent_signals and now_ms - sent_signals[token] < SIGNAL_COOLDOWN_SECONDS * 1000:
+                        continue
+
+                    # Пропускаем токен если по нему уже была сделка сегодня
+                    if token in _traded_today:
+                        print(f"🚫 {token.replace('/USDT:USDT','')}: сигнал пропущен — сделка уже была сегодня", flush=True)
                         continue
 
                     sym_clean = token.replace('/USDT:USDT','').replace('/USDC:USDC','')
