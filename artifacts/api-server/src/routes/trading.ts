@@ -350,7 +350,7 @@ router.post("/live-trading/close-position", async (req, res) => {
       return res.status(400).json({ error: "No open position" });
     }
 
-    const sym = pos.symbol as string || pos.token as string;
+    const sym = pos.bingx_symbol as string || pos.symbol as string || (pos.token as string)?.replace('/USDT:USDT', '-USDT').replace('/USDC:USDC', '-USDC').replace('/', '-');
     const isLong = (pos.direction as string) === "BUY";
     const qty = pos.qty as number;
 
