@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { Target, X } from "lucide-react";
+import { Target, X, TrendingUp, TrendingDown, ShieldAlert, Layers } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,12 +40,27 @@ interface LocalOpenPos {
   qty?: number;
   tp?: number;
   sl?: number;
+  atr?: number;
+  adx?: number;
   collateral?: number;
   position_value?: number;
   opened_at?: string;
   dca_entries?: number;
   last_dca_at?: string;
 }
+
+// Strategy constants — mirrored from scanner.py
+const STRATEGY = {
+  leverage: 15,
+  maxPositions: 2,
+  entryPct: 10,
+  maxDca: 10,
+  slAtr: 5.5,
+  tpAtr: 7.0,
+  rr: "1:1.27",
+  dcaTriggerPct: 1,
+  timeframe: "4H",
+};
 
 export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, isToggling, onClosePosition, isClosing }: BotPanelProps) {
   const [confirmClose, setConfirmClose] = useState<string | null>(null);
@@ -56,7 +71,7 @@ export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, 
     (data as Record<string, unknown>).open_positions as LocalOpenPos[] | null
   ) ?? (data.open_position ? [data.open_position as LocalOpenPos] : []);
 
-  const openPos = openPositions[0] ?? null; // для backward compat (close button)
+  const openPos = openPositions[0] ?? null;
 
   return (
     <Card className={cn(
@@ -88,10 +103,35 @@ export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, 
 
       <CardContent className="flex flex-col gap-2.5 px-4 pb-4">
 
-        {/* ACTIVE POSITION */}
+        {/* STRATEGY PARAMS ROW */}
+        <div className="grid grid-cols-4 gap-1.5 p-2 rounded-md bg-background/60 border border-border/40">
+          <div className="text-center">
+            <div className="text-[10px] text-muted-foreground font-mono uppercase tracking-widest leading-none mb-0.5">ПЛЕЧО</div>
+            <div className="text-xs font-bold font-mono text-primary">×{STRATEGY.leverage}</div>
+          </div>
+          <div className="text-center border-l border-border/40">
+            <div className="text-[10px] text-muted-foreground font-mono uppercase tracking-widest leading-none mb-0.5">R/R</div>
+            <div className="text-xs font-bold font-mono text-success">{STRATEGY.rr}</div>
+          </div>
+          <div className="text-center border-l border-border/40">
+            <div className="text-[10px] text-muted-foreground font-mono uppercase tracking-widest leading-none mb-0.5">DCA MAX</div>
+            <div className="text-xs font-bold font-mono text-accent">{STRATEGY.maxDca}×</div>
+          </div>
+          <div className="text-center border-l border-border/40">
+            <div className="text-[10px] text-muted-foreground font-mono uppercase tracking-widest leading-none mb-0.5">ВХОД</div>
+            <div className="text-xs font-bold font-mono text-muted-foreground">{STRATEGY.entryPct}%</div>
+          </div>
+        </div>
+
+        {/* ACTIVE POSITIONS */}
         <div>
           <div className="text-xs font-bold text-muted-foreground mb-1.5 flex items-center gap-1.5 uppercase tracking-widest">
             <Target className="w-3.5 h-3.5" /> Active Position
+            {openPositions.length > 0 && (
+              <span className="ml-auto text-xs font-mono font-normal">
+                {openPositions.length}/{STRATEGY.maxPositions}
+              </span>
+            )}
           </div>
 
           <AnimatePresence mode="popLayout">
@@ -103,6 +143,32 @@ export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, 
                     p.symbol.replace("/", "-").replace(":USDT", "").replace("-USDT", "") === symKey.replace("-USDT", "")
                   ) ?? null;
 
+                  const isLong = pos.direction === "BUY";
+                  const entryPrice = pos.entry_price ?? 0;
+                  const tpPrice = pos.tp ?? 0;
+                  const slPrice = pos.sl ?? 0;
+                  const hasSLTP = tpPrice > 0 && slPrice > 0;
+                  const currentPrice = pnlEntry?.currentPrice ?? 0;
+
+                  // Progress toward TP (0–100%)
+                  let tpProgress = 0;
+                  if (hasSLTP && currentPrice > 0 && entryPrice > 0) {
+                    if (isLong) {
+                      const range = tpPrice - entryPrice;
+                      tpProgress = range > 0 ? Math.min(100, Math.max(0, ((currentPrice - entryPrice) / range) * 100)) : 0;
+                    } else {
+                      const range = entryPrice - tpPrice;
+                      tpProgress = range > 0 ? Math.min(100, Math.max(0, ((entryPrice - currentPrice) / range) * 100)) : 0;
+                    }
+                  }
+
+                  const tpPct = hasSLTP && entryPrice > 0
+                    ? Math.abs((tpPrice - entryPrice) / entryPrice * 100)
+                    : 0;
+                  const slPct = hasSLTP && entryPrice > 0
+                    ? Math.abs((slPrice - entryPrice) / entryPrice * 100)
+                    : 0;
+
                   return (
                     <motion.div
                       key={pos.token ?? idx}
@@ -111,26 +177,63 @@ export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, 
                       exit={{ opacity: 0, scale: 0.97 }}
                       className={cn(
                         "p-3 rounded-lg border",
-                        pos.direction === "BUY" ? "border-success/30 bg-success/5" : "border-danger/30 bg-danger/5"
+                        isLong ? "border-success/30 bg-success/5" : "border-danger/30 bg-danger/5"
                       )}
                     >
                       {/* Token + badge + collateral */}
                       <div className="flex justify-between items-center mb-2">
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-sm">{pos.token?.replace("/USDT:USDT", "")}</span>
-                          <Badge variant={pos.direction === "BUY" ? "success" : "destructive"} className="text-xs px-1.5 py-0 h-5">
-                            {pos.direction === "BUY" ? "LONG" : "SHORT"}
+                          <Badge variant={isLong ? "success" : "destructive"} className="text-xs px-1.5 py-0 h-5">
+                            {isLong ? "LONG" : "SHORT"}
                           </Badge>
+                          {pos.adx && pos.adx > 0 && (
+                            <span className="text-[10px] font-mono text-muted-foreground">ADX {pos.adx.toFixed(0)}</span>
+                          )}
                         </div>
                         <div className="text-right">
                           <div className="font-mono text-sm font-bold">{formatMoney(pos.collateral)}</div>
+                          <div className="text-[10px] font-mono text-muted-foreground">×{STRATEGY.leverage} = {formatMoney((pos.collateral ?? 0) * STRATEGY.leverage)}</div>
                         </div>
                       </div>
+
+                      {/* SL / TP levels */}
+                      {hasSLTP ? (
+                        <div className="mb-2 space-y-1">
+                          {/* TP progress bar */}
+                          <div className="flex items-center gap-2">
+                            <TrendingUp className="w-3 h-3 text-success shrink-0" />
+                            <div className="flex-1 h-1.5 bg-background rounded-full overflow-hidden border border-border/40">
+                              <motion.div
+                                className="h-full bg-success rounded-full"
+                                initial={{ width: 0 }}
+                                animate={{ width: `${tpProgress}%` }}
+                                transition={{ duration: 0.6, ease: "easeOut" }}
+                              />
+                            </div>
+                            <span className="text-[10px] font-mono text-success shrink-0">
+                              TP {formatMoney(tpPrice)} <span className="opacity-60">(+{tpPct.toFixed(1)}%)</span>
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <ShieldAlert className="w-3 h-3 text-danger shrink-0" />
+                            <div className="flex-1 h-px bg-danger/30" />
+                            <span className="text-[10px] font-mono text-danger shrink-0">
+                              SL {formatMoney(slPrice)} <span className="opacity-60">(-{slPct.toFixed(1)}%)</span>
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mb-2 flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/50">
+                          <ShieldAlert className="w-3 h-3" />
+                          <span>SL/TP — данные позиции до обновления</span>
+                        </div>
+                      )}
 
                       {/* DCA Progress */}
                       {(() => {
                         const entries = pos.dca_entries ?? 1;
-                        const maxEntries = 10;
+                        const maxEntries = STRATEGY.maxDca;
                         const DCA_INTERVAL_SEC = 900;
                         let nextDcaLabel = "";
                         if (pos.last_dca_at) {
@@ -147,7 +250,7 @@ export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, 
                         return (
                           <div className="mb-2">
                             <div className="flex items-center gap-2 mb-1">
-                              <span className="text-xs text-muted-foreground font-mono uppercase shrink-0">DCA</span>
+                              <Layers className="w-3 h-3 text-muted-foreground shrink-0" />
                               <div className="flex gap-0.5 flex-1">
                                 {Array.from({ length: maxEntries }).map((_, i) => (
                                   <div
@@ -155,7 +258,7 @@ export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, 
                                     className={cn(
                                       "h-1.5 flex-1 rounded-sm transition-colors",
                                       i < entries
-                                        ? pos.direction === "BUY" ? "bg-success" : "bg-danger"
+                                        ? isLong ? "bg-success" : "bg-danger"
                                         : "bg-border"
                                     )}
                                   />
