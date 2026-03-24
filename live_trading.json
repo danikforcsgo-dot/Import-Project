@@ -7,7 +7,7 @@
   },
   "trades": [],
   "balance": 0,
-  "enabled": false,
+  "enabled": true,
   "open_position": null,
   "initial_balance": 0
 }

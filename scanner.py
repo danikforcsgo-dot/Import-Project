@@ -1915,63 +1915,96 @@ def main():
                     if token in sent_signals and now_ms - sent_signals[token] < SIGNAL_COOLDOWN_SECONDS * 1000:
                         continue
 
-                    is_long   = signal['signal'] == 'BUY'
-                    sig_emoji = '🚀 ЛОНГ' if is_long else '🔴 ШОРТ'
                     sym_clean = token.replace('/USDT:USDT','').replace('/USDC:USDC','')
-
-                    message = (
-                        f"{sig_emoji} — <b>НОВЫЙ СИГНАЛ!</b>\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"📊 Токен:  <b>{sym_clean}</b>\n"
-                        f"💰 Цена:   <b>${signal['price']:,.4f}</b>\n"
-                        f"⏰ {datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')}"
-                    )
-
-                    sig_msg_id = send_telegram(message, force=True)
-                    add_signal_followup(sig_msg_id, token, signal['signal'], signal['price'], message)
+                    # Тихо сохраняем в БД и в список — Telegram только после полного скана
                     save_signal_to_dashboard(signal, token)
                     signals_found += 1
                     scan_signals_this_round += 1
                     sent_signals[token] = now_ms
-                    save_sent_signals(sent_signals)
                     print(f"✅ {signal['signal']} Signal: {token} @ ${signal['price']:,.6f}", flush=True)
 
-                    scan_pending_signals.append({'signal': signal, 'token': token})
+                    scan_pending_signals.append({'signal': signal, 'token': token, 'sym': sym_clean})
 
-        # ── Ранжируем сигналы и открываем лучшие ──────────────────────────────
+        # ── Сохраняем кулдауны и ранжируем сигналы ────────────────────────────
         if paused_mid_scan:
             continue
 
         if scan_pending_signals:
+            save_sent_signals(sent_signals)
+
+        if scan_pending_signals:
             live_state = load_live()
-            if live_state.get('enabled', False):
-                def _score(item):
-                    sig = item['signal']
-                    adx = float(sig.get('adx', 0) or 0)
-                    ema_fast = float(sig.get('ema_fast', 0) or 0)
-                    ema_slow = float(sig.get('ema_slow', 1) or 1)
-                    ema_spread = abs(ema_fast - ema_slow) / ema_slow * 100 if ema_slow > 0 else 0
-                    return adx * 0.6 + ema_spread * 0.4
+            bot_enabled = live_state.get('enabled', False)
 
-                ranked = sorted(scan_pending_signals, key=_score, reverse=True)
-                current_cnt = len(live_state.get('open_positions') or [])
-                slots = max(0, MAX_POSITIONS - current_cnt)
+            def _score(item):
+                sig = item['signal']
+                adx = float(sig.get('adx', 0) or 0)
+                ema_fast = float(sig.get('ema_fast', 0) or 0)
+                ema_slow = float(sig.get('ema_slow', 1) or 1)
+                ema_spread = abs(ema_fast - ema_slow) / ema_slow * 100 if ema_slow > 0 else 0
+                return adx * 0.6 + ema_spread * 0.4
 
-                if len(ranked) > 1:
-                    lines = []
-                    for idx, item in enumerate(ranked):
-                        sym = item['token'].replace('/USDT:USDT','').replace('/USDC:USDC','')
-                        score = _score(item)
-                        adx_v = float(item['signal'].get('adx', 0) or 0)
-                        mark = '✅' if idx < slots else '⏭️'
-                        lines.append(f"{mark} {idx+1}. <b>{sym}</b>  ADX={adx_v:.1f}  score={score:.1f}")
-                    sel_msg = (
-                        f"🔍 <b>Выбор сигналов</b> ({len(ranked)} найдено, открываем {min(slots, len(ranked))}):\n"
-                        + "\n".join(lines)
-                    )
-                    send_telegram(sel_msg, force=True)
-                    print(f"📊 Ranked {len(ranked)} signals, {slots} slot(s) available", flush=True)
+            ranked = sorted(scan_pending_signals, key=_score, reverse=True)
+            current_cnt = len(live_state.get('open_positions') or [])
+            slots = max(0, MAX_POSITIONS - current_cnt)
+            opening_cnt = min(slots, len(ranked)) if bot_enabled else 0
 
+            # ── Отправляем ЕДИНОЕ сообщение с полным рейтингом ────────────────
+            now_str = datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')
+            rank_lines = []
+            for idx, item in enumerate(ranked):
+                sig   = item['signal']
+                sym   = item['sym']
+                is_long = sig['signal'] == 'BUY'
+                dir_e  = '🚀 ЛОНГ' if is_long else '🔴 ШОРТ'
+                adx_v  = float(sig.get('adx', 0) or 0)
+                score  = _score(item)
+                price  = sig['price']
+                tp     = float(sig.get('tp', 0))
+                sl     = float(sig.get('sl', 0))
+                tp_pct = abs((tp - price) / price * 100 * LIVE_LEVERAGE) if tp and price else 0
+                sl_pct = abs((sl - price) / price * 100 * LIVE_LEVERAGE) if sl and price else 0
+                if idx < opening_cnt:
+                    mark = '✅ ОТКРЫВАЕМ'
+                elif bot_enabled and slots == 0:
+                    mark = '🔒 нет слотов'
+                else:
+                    mark = '⏭️'
+                rank_lines.append(
+                    f"{mark} <b>{idx+1}. {sym}</b>  {dir_e}\n"
+                    f"   💰 ${price:,.4f}  ADX={adx_v:.1f}  score={score:.1f}\n"
+                    f"   TP +{tp_pct:.1f}%  SL -{sl_pct:.1f}%  (×{LIVE_LEVERAGE})"
+                )
+
+            if bot_enabled and slots > 0:
+                header = f"🏆 <b>Рейтинг сигналов — открываем {opening_cnt}</b>"
+            elif bot_enabled and slots == 0:
+                header = f"📊 <b>Рейтинг сигналов — нет свободных слотов ({MAX_POSITIONS}/{MAX_POSITIONS})</b>"
+            else:
+                header = f"📊 <b>Рейтинг сигналов — бот выключен (не торгуем)</b>"
+
+            consolidated = (
+                f"{header}\n"
+                f"⏰ {now_str}\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                + "\n".join(rank_lines)
+            )
+            ranking_msg_id = send_telegram(consolidated, force=True)
+            print(f"📊 Ranked {len(ranked)} signals, {slots} slot(s), opening {opening_cnt}", flush=True)
+
+            # Followup-трекинг для выбранных сигналов (отдельное сообщение на каждый)
+            for idx, item in enumerate(ranked[:opening_cnt]):
+                sig = item['signal']
+                sym = item['sym']
+                is_long = sig['signal'] == 'BUY'
+                fwd_msg = (
+                    f"{'🚀 ЛОНГ' if is_long else '🔴 ШОРТ'} — <b>ОТКРЫВАЕМ</b>\n"
+                    f"📊 <b>{sym}</b>  💰 ${sig['price']:,.4f}"
+                )
+                fwd_id = send_telegram(fwd_msg, force=True)
+                add_signal_followup(fwd_id, item['token'], sig['signal'], sig['price'], fwd_msg)
+
+            if bot_enabled:
                 for item in ranked[:slots]:
                     # Перепроверяем enabled и isPaused прямо перед каждым открытием.
                     # Проверяем ОБА источника: дев-БД и продакшн API (разные БД!).
