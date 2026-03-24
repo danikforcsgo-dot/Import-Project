@@ -10,6 +10,7 @@ import json
 import hmac
 import hashlib
 from urllib.parse import urlencode
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from datetime import datetime, timezone, timedelta
 
@@ -165,6 +166,21 @@ exchange = ccxt.bingx({
     }
 })
 
+# Thread-local exchange instances для параллельного сканирования
+_tl = threading.local()
+
+def _get_exchange():
+    """Возвращает exchange для текущего потока (thread-safe)."""
+    if not hasattr(_tl, 'exchange'):
+        _tl.exchange = ccxt.bingx({
+            'options': {
+                'defaultType': 'swap',
+                'adjustForTimeDifference': True,
+            },
+            'enableRateLimit': False,
+        })
+    return _tl.exchange
+
 # === ИНДИКАТОРЫ ===
 def calc_ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
@@ -319,7 +335,7 @@ def update_scanner_status(status_data):
 # === ПРОВЕРКА СИГНАЛА ===
 def check_signal(symbol):
     try:
-        bars = exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=120)
+        bars = _get_exchange().fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=120)
         if not bars or len(bars) < 90:
             return None
 
@@ -474,7 +490,7 @@ def _process_followups():
         entry_price = item["entry_price"]
         msg_id = item["msg_id"]
         try:
-            bars = exchange.fetch_ohlcv(token, timeframe='1m', limit=2)
+            bars = _get_exchange().fetch_ohlcv(token, timeframe='1m', limit=2)
             current_price = float(bars[-1][4]) if bars else None
         except Exception as e:
             print(f"⚠️ Followup price fetch error for {token}: {e}", flush=True)
@@ -1628,7 +1644,7 @@ def send_signal_retrospective(hours: int = 12):
     results = []
     for symbol, signal_type, entry_price, created_at in rows:
         try:
-            bars = exchange.fetch_ohlcv(symbol, timeframe='1m', limit=2)
+            bars = _get_exchange().fetch_ohlcv(symbol, timeframe='1m', limit=2)
             cur_price = float(bars[-1][4]) if bars else None
         except Exception:
             cur_price = None
@@ -1850,64 +1866,82 @@ def main():
             "signalsFoundThisScan": 0,
         })
 
-        for i, token in enumerate(TOKENS):
-            # Check pause mid-scan every 5 tokens
-            if i % 5 == 0:
-                try:
-                    resp = requests.get(f"{API_BASE}/api/scanner/status", timeout=3)
-                    if resp.status_code == 200 and resp.json().get("isPaused", False):
-                        print("⏸️ Scanner paused mid-scan, stopping.", flush=True)
-                        update_scanner_status({"isScanning": False, "isPaused": True})
-                        break
-                except Exception:
-                    pass
+        # Параллельное сканирование — 8 воркеров одновременно (ускоряет с ~1ч до ~5 мин)
+        SCAN_WORKERS = 8
+        completed_count = 0
+        paused_mid_scan = False
+        scan_lock = threading.Lock()
 
-            update_scanner_status({
-                "isScanning": True,
-                "currentSymbol": token,
-                "tokenIndex": i + 1,
-                "totalTokens": len(TOKENS),
-                "signalsFoundThisScan": scan_signals_this_round,
-            })
+        def _do_scan_token(token):
+            """Сканирует один токен; возвращает (token, signal|None)."""
+            try:
+                sig = check_signal(token)
+                return (token, sig)
+            except Exception as _e:
+                print(f"⚠️ Scan error {token}: {_e}", flush=True)
+                return (token, None)
 
-            signal = check_signal(token)
+        with ThreadPoolExecutor(max_workers=SCAN_WORKERS) as _pool:
+            future_map = {_pool.submit(_do_scan_token, tok): tok for tok in TOKENS}
+            for fut in as_completed(future_map):
+                # Проверяем паузу каждые 10 завершённых токенов
+                with scan_lock:
+                    completed_count += 1
+                    _done = completed_count
 
-            if signal:
-                now_ms = int(time.time() * 1000)
-                if token in sent_signals and now_ms - sent_signals[token] < SIGNAL_COOLDOWN_SECONDS * 1000:
-                    continue
+                if _done % 10 == 0:
+                    try:
+                        resp = requests.get(f"{API_BASE}/api/scanner/status", timeout=3)
+                        if resp.status_code == 200 and resp.json().get("isPaused", False):
+                            print("⏸️ Scanner paused mid-scan, stopping.", flush=True)
+                            update_scanner_status({"isScanning": False, "isPaused": True})
+                            paused_mid_scan = True
+                            break
+                    except Exception:
+                        pass
 
-                is_long   = signal['signal'] == 'BUY'
-                sig_emoji = '🚀 ЛОНГ' if is_long else '🔴 ШОРТ'
-                sym_clean = token.replace('/USDT:USDT','').replace('/USDC:USDC','')
-                tp_pct_raw = abs((signal['tp'] - signal['price']) / signal['price']) * 100
-                sl_pct_raw = abs((signal['sl'] - signal['price']) / signal['price']) * 100
-                tp_pct_lev = tp_pct_raw * LIVE_LEVERAGE
-                sl_pct_lev = sl_pct_raw * LIVE_LEVERAGE
+                token, signal = fut.result()
 
-                message = (
-                    f"{sig_emoji} — <b>НОВЫЙ СИГНАЛ!</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📊 Токен:  <b>{sym_clean}</b>\n"
-                    f"💰 Цена:   <b>${signal['price']:,.4f}</b>\n"
-                    f"⏰ {datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')}"
-                )
+                update_scanner_status({
+                    "isScanning": True,
+                    "currentSymbol": token,
+                    "tokenIndex": _done,
+                    "totalTokens": len(TOKENS),
+                    "signalsFoundThisScan": scan_signals_this_round,
+                })
 
-                sig_msg_id = send_telegram(message, force=True)
-                add_signal_followup(sig_msg_id, token, signal['signal'], signal['price'], message)
-                save_signal_to_dashboard(signal, token)
-                signals_found += 1
-                scan_signals_this_round += 1
-                sent_signals[token] = now_ms
-                save_sent_signals(sent_signals)
-                print(f"✅ {signal['signal']} Signal: {token} @ ${signal['price']:,.6f}", flush=True)
+                if signal:
+                    now_ms = int(time.time() * 1000)
+                    if token in sent_signals and now_ms - sent_signals[token] < SIGNAL_COOLDOWN_SECONDS * 1000:
+                        continue
 
-                # Добавляем в очередь — лучшие откроем в конце скана
-                scan_pending_signals.append({'signal': signal, 'token': token})
+                    is_long   = signal['signal'] == 'BUY'
+                    sig_emoji = '🚀 ЛОНГ' if is_long else '🔴 ШОРТ'
+                    sym_clean = token.replace('/USDT:USDT','').replace('/USDC:USDC','')
 
-            time.sleep(0.3)
+                    message = (
+                        f"{sig_emoji} — <b>НОВЫЙ СИГНАЛ!</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📊 Токен:  <b>{sym_clean}</b>\n"
+                        f"💰 Цена:   <b>${signal['price']:,.4f}</b>\n"
+                        f"⏰ {datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')}"
+                    )
+
+                    sig_msg_id = send_telegram(message, force=True)
+                    add_signal_followup(sig_msg_id, token, signal['signal'], signal['price'], message)
+                    save_signal_to_dashboard(signal, token)
+                    signals_found += 1
+                    scan_signals_this_round += 1
+                    sent_signals[token] = now_ms
+                    save_sent_signals(sent_signals)
+                    print(f"✅ {signal['signal']} Signal: {token} @ ${signal['price']:,.6f}", flush=True)
+
+                    scan_pending_signals.append({'signal': signal, 'token': token})
 
         # ── Ранжируем сигналы и открываем лучшие ──────────────────────────────
+        if paused_mid_scan:
+            continue
+
         if scan_pending_signals:
             live_state = load_live()
             if live_state.get('enabled', False):
