@@ -1,8 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { Activity, Radio } from "lucide-react";
+import { Activity, TrendingUp, TrendingDown } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+
+interface PnlAnalysis {
+  today: number | null;
+  week: number | null;
+  month: number | null;
+}
 
 interface SignalStats {
   todayCount: number;
@@ -13,6 +19,17 @@ interface SignalStats {
     price: number;
     createdAt: string;
   } | null;
+}
+
+function usePnlAnalysis() {
+  return useQuery({
+    queryKey: ["/api/live-trading/pnl-analysis"],
+    queryFn: async () => {
+      const res = await fetch("/api/live-trading/pnl-analysis");
+      return res.json() as Promise<PnlAnalysis>;
+    },
+    refetchInterval: 60000,
+  });
 }
 
 function useSignalStats() {
@@ -44,7 +61,7 @@ function useNextCandleCountdown(periodHours = 4) {
           ? `${h}ч ${String(m).padStart(2, "0")}м ${String(s).padStart(2, "0")}с`
           : `${String(m).padStart(2, "0")}м ${String(s).padStart(2, "0")}с`
       );
-      setUrgent(diff < 5 * 60_000); // последние 5 минут — жёлтый
+      setUrgent(diff < 5 * 60_000);
     }
     tick();
     const id = setInterval(tick, 1000);
@@ -62,16 +79,39 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(diff / 86400)}д`;
 }
 
-interface StatisticsPanelProps {
-  openPosition: { direction?: string } | null;
+function PnlRow({ label, value }: { label: string; value: number | null }) {
+  const isLoading = value === null;
+  const isPos = (value ?? 0) >= 0;
+  const formatted = isLoading
+    ? "—"
+    : `${isPos ? "+" : ""}${value!.toFixed(2)} USDT`;
+
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-xs text-muted-foreground uppercase tracking-widest">{label}</span>
+      <div className="flex items-center gap-1.5">
+        {!isLoading && (
+          isPos
+            ? <TrendingUp className="w-3 h-3 text-success shrink-0" />
+            : <TrendingDown className="w-3 h-3 text-danger shrink-0" />
+        )}
+        <span className={cn(
+          "font-mono text-sm font-bold tabular-nums",
+          isLoading ? "text-muted-foreground" : isPos ? "text-success" : "text-danger"
+        )}>
+          {formatted}
+        </span>
+      </div>
+    </div>
+  );
 }
 
-export function StatisticsPanel({ openPosition }: StatisticsPanelProps) {
-  const { data } = useSignalStats();
+export function StatisticsPanel() {
+  const { data: pnl } = usePnlAnalysis();
+  const { data: signals } = useSignalStats();
   const { remaining, urgent } = useNextCandleCountdown(4);
 
-  const hasPos = !!openPosition;
-  const lastSig = data?.lastSignal;
+  const lastSig = signals?.lastSignal;
   const tokenName = lastSig?.symbol?.replace("-USDT", "").replace("/USDT:USDT", "") ?? "";
 
   return (
@@ -84,27 +124,11 @@ export function StatisticsPanel({ openPosition }: StatisticsPanelProps) {
       </CardHeader>
       <CardContent className="px-4 pb-3 flex flex-col gap-2.5">
 
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-muted-foreground uppercase tracking-widest">Позиции открыты</span>
-          <span className={cn(
-            "px-2 py-0.5 rounded-full border font-mono text-xs font-bold uppercase",
-            hasPos
-              ? "bg-success/20 text-success border-success/40"
-              : "bg-muted/20 text-muted-foreground border-border/40"
-          )}>
-            {hasPos ? "ДА" : "НЕТ"}
-          </span>
-        </div>
+        <PnlRow label="П/У сегодня"  value={pnl?.today  ?? null} />
+        <PnlRow label="П/У за 7 дн." value={pnl?.week   ?? null} />
+        <PnlRow label="П/У за 30 дн." value={pnl?.month  ?? null} />
 
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-muted-foreground uppercase tracking-widest">Сигналов за 24ч</span>
-          <div className="flex items-center gap-1.5">
-            <Radio className="w-3 h-3 text-primary" />
-            <span className="font-mono text-sm font-bold leading-none">{data?.todayCount ?? "—"}</span>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between">
+        <div className="border-t border-border/40 pt-2 flex items-center justify-between">
           <span className="text-xs text-muted-foreground uppercase tracking-widest">
             До 4H свечи
           </span>

@@ -120,7 +120,7 @@ export default function Dashboard() {
 
         {/* STATISTICS — full width */}
         <motion.div custom={1} variants={fade} initial="hidden" animate="visible" className="mb-3">
-          <StatisticsPanel openPosition={(live.data?.open_position as { direction?: string } | null) ?? null} />
+          <StatisticsPanel />
         </motion.div>
 
         {/* SECOND ROW: Markets (left) + Live Trading (right) — same level */}

@@ -258,6 +258,43 @@ router.post("/scanner/sleep", async (req, res) => {
   }
 });
 
+router.get("/live-trading/pnl-analysis", async (req, res) => {
+  const apiKey = process.env.BINGX_API_KEY;
+  const secretKey = process.env.BINGX_SECRET_KEY;
+  if (!apiKey || !secretKey) return res.json({ today: null, week: null, month: null });
+
+  try {
+    const now = Date.now();
+    const todayStartMs = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00.000Z").getTime();
+    const weekStartMs  = now - 7  * 24 * 60 * 60 * 1000;
+    const monthStartMs = now - 30 * 24 * 60 * 60 * 1000;
+
+    const raw = await bingxGet(
+      "/openApi/swap/v2/user/income",
+      { startTime: monthStartMs, limit: 1000 },
+      apiKey, secretKey
+    ) as { data?: Array<{ income: string; time: number; incomeType: string }> };
+
+    const items = raw?.data ?? [];
+    let today = 0, week = 0, month = 0;
+    const INCLUDE_TYPES = new Set(["REALIZED_PNL", "FUNDING_FEE", "COMMISSION"]);
+
+    for (const item of items) {
+      if (!INCLUDE_TYPES.has(item.incomeType)) continue;
+      const ts  = Number(item.time);
+      const val = parseFloat(item.income) || 0;
+      month += val;
+      if (ts >= weekStartMs)  week  += val;
+      if (ts >= todayStartMs) today += val;
+    }
+
+    res.json({ today, week, month });
+  } catch (err) {
+    req.log.warn(err, "pnl-analysis failed");
+    res.json({ today: null, week: null, month: null });
+  }
+});
+
 router.get("/scanner/sleep", async (req, res) => {
   try {
     const rows = await db.select().from(scannerStatusTable).where(eq(scannerStatusTable.id, 1));
