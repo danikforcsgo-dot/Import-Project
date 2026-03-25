@@ -141,8 +141,7 @@ TOKENS = [
 # === ПАРАМЕТРЫ СТРАТЕГИИ ===
 EMA_FAST = 20
 EMA_SLOW = 80
-ADX_MIN = 15       # минимальный ADX для генерации сигнала (в ТВ-скрипте)
-OPEN_MIN_ADX = 25  # минимальный ADX для ОТКРЫТИЯ реальной позиции (сильный тренд)
+ADX_MIN = 15
 EMA_BUFFER = 0.0    # без буфера — как в TV-скрипте
 RSI_PERIOD = 14
 RSI_MIN = 50
@@ -2165,7 +2164,39 @@ def main():
 
         # ── Логируем время скана ────────────────────────────────────────────────
         scan_elapsed = (datetime.now() - scan_start).total_seconds()
-        print(f"⏱️ Скан завершён за {scan_elapsed:.1f}с | {len(TOKENS)} токенов | {scan_signals_this_round} сигналов", flush=True)
+        print(f"⏱️ Скан 1/2 завершён за {scan_elapsed:.1f}с | {len(TOKENS)} токенов | {scan_signals_this_round} сигналов", flush=True)
+
+        # ── ВТОРОЙ СКАН: повторно проверяем токены, которых не было в скане 1 ──
+        # Цель: поймать токены с таймаутами в скане 1 и собрать больше сигналов
+        # Токены из скана 1 пропускаем (уже в sent_signals + в scan_pending_signals)
+        if not paused_mid_scan:
+            _scan1_tokens = {item['token'] for item in scan_pending_signals}
+            _tokens_for_scan2 = [t for t in TOKENS if t not in _scan1_tokens]
+            if _tokens_for_scan2:
+                scan2_start = datetime.now()
+                scan2_found = 0
+                _pool2_count = 0
+                with ThreadPoolExecutor(max_workers=SCAN_WORKERS) as _pool2:
+                    future_map2 = {_pool2.submit(_do_scan_token, tok): tok for tok in _tokens_for_scan2}
+                    for fut2 in as_completed(future_map2):
+                        token2, signal2 = fut2.result()
+                        _pool2_count += 1
+                        if signal2:
+                            # Пропускаем если уже была сделка сегодня
+                            if token2 in _traded_today:
+                                continue
+                            sym2 = token2.replace('/USDT:USDT','').replace('/USDC:USDC','')
+                            save_signal_to_dashboard(signal2, token2)
+                            signals_found += 1
+                            scan_signals_this_round += 1
+                            scan2_found += 1
+                            sent_signals[token2] = int(time.time() * 1000)
+                            print(f"✅ [скан2] {signal2['signal']} Signal: {token2} @ ${signal2['price']:,.6f}", flush=True)
+                            scan_pending_signals.append({'signal': signal2, 'token': token2, 'sym': sym2})
+                scan2_elapsed = (datetime.now() - scan2_start).total_seconds()
+                print(f"⏱️ Скан 2/2 завершён за {scan2_elapsed:.1f}с | {len(_tokens_for_scan2)} токенов | {scan2_found} новых сигналов", flush=True)
+            else:
+                print(f"⏭️ Скан 2/2 пропущен — все {len(TOKENS)} токенов уже дали сигналы в скане 1", flush=True)
 
         # ── Сохраняем кулдауны и ранжируем сигналы ────────────────────────────
         if paused_mid_scan:
@@ -2189,17 +2220,7 @@ def main():
             ranked = sorted(scan_pending_signals, key=_score, reverse=True)
             current_cnt = len(live_state.get('open_positions') or [])
             slots = max(0, MAX_POSITIONS - current_cnt)
-
-            # Фильтруем только сигналы с достаточно сильным трендом для открытия
-            # (ADX >= OPEN_MIN_ADX). Слабые сигналы показываем в рейтинге, но не открываем.
-            _openable = [it for it in ranked
-                         if float(it['signal'].get('adx', 0) or 0) >= OPEN_MIN_ADX]
-            opening_cnt = min(slots, len(_openable)) if bot_enabled else 0
-
-            # Если нет достаточно сильных сигналов — логируем
-            if bot_enabled and slots > 0 and ranked and not _openable:
-                _best_adx = float(ranked[0]['signal'].get('adx', 0) or 0)
-                print(f"⏭️ Сигналы найдены, но ADX слишком слабый (лучший ADX={_best_adx:.1f} < {OPEN_MIN_ADX}) — позиции не открываем", flush=True)
+            opening_cnt = min(slots, len(ranked)) if bot_enabled else 0
 
             # ── Отправляем ЕДИНОЕ сообщение с полным рейтингом ────────────────
             # Защита от дублей: не отправляем рейтинг дважды за одну 4H свечу
@@ -2222,14 +2243,10 @@ def main():
                     sl      = float(sig.get('sl', 0))
                     tp_pct  = abs((tp - price) / price * 100 * LIVE_LEVERAGE) if tp and price else 0
                     sl_pct  = abs((sl - price) / price * 100 * LIVE_LEVERAGE) if sl and price else 0
-                    _adx_ok = float(sig.get('adx', 0) or 0) >= OPEN_MIN_ADX
-                    # ✅ = в списке открываемых; 🔒 = нет слотов; 〰️ = слабый ADX; ⏭️ = остаток
-                    if item in _openable and _openable.index(item) < opening_cnt:
+                    if idx < opening_cnt:
                         mark = '✅'
                     elif bot_enabled and slots == 0:
                         mark = '🔒'
-                    elif not _adx_ok:
-                        mark = '〰️'
                     else:
                         mark = '⏭️'
                     num = f"{idx+1}."
@@ -2238,10 +2255,8 @@ def main():
                         f"   ADX {adx_v:.1f}  ·  score {score:.1f}"
                     )
 
-                if bot_enabled and slots > 0 and opening_cnt > 0:
+                if bot_enabled and slots > 0:
                     header = f"🏆 <b>Рейтинг сигналов — открываем {opening_cnt}</b>"
-                elif bot_enabled and slots > 0 and not _openable:
-                    header = f"〰️ <b>Рейтинг сигналов — слабый тренд (ADX &lt; {OPEN_MIN_ADX})</b>"
                 elif bot_enabled and slots == 0:
                     header = f"🔒 <b>Рейтинг сигналов — нет слотов ({MAX_POSITIONS}/{MAX_POSITIONS})</b>"
                 else:
@@ -2273,7 +2288,7 @@ def main():
                 print(f"⏭️ Открытие позиций пропущено — рейтинг этой свечи уже обработан", flush=True)
             else:
                 # Followup-трекинг для выбранных сигналов (только те, что реально откроем)
-                for idx, item in enumerate(_openable[:opening_cnt]):
+                for idx, item in enumerate(ranked[:opening_cnt]):
                     sig = item['signal']
                     sym = item['sym']
                     is_long = sig['signal'] == 'BUY'
@@ -2285,7 +2300,7 @@ def main():
                     add_signal_followup(fwd_id, item['token'], sig['signal'], sig['price'], fwd_msg)
 
                 if bot_enabled:
-                    for item in _openable[:opening_cnt]:
+                    for item in ranked[:opening_cnt]:
                         # Перепроверяем enabled прямо перед каждым открытием.
                         # is_bot_enabled() читает из DB через API — работает и в dev и в prod.
                         if not is_bot_enabled():
