@@ -1,0 +1,31 @@
+kind = "slides"
+previewPath = "/kokojambo-presentation/"
+title = "KokojamboTrade — Система алгоритмической торговли"
+version = "1.0.0"
+id = "artifacts/kokojambo-presentation"
+router = "path"
+
+[[integratedSkills]]
+name = "slides"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/kokojambo-presentation/" ]
+localPort = 23861
+
+[services.development]
+run = "pnpm --filter @workspace/kokojambo-presentation run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/kokojambo-presentation", "run", "build" ]
+publicDir = "artifacts/kokojambo-presentation/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23861"
+BASE_PATH = "/kokojambo-presentation/"

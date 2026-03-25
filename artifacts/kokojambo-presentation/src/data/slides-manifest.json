@@ -1,0 +1,82 @@
+[
+  {
+    "id": "9f61f7eb-1ace-47f3-b8d5-9d5413e1282a",
+    "position": 1,
+    "filepath": "src/pages/slides/TitleSlide.tsx",
+    "title": "KokojamboTrade",
+    "description": "Титульный слайд — алгоритмическая торговая система BingX.",
+    "speakerNotes": ""
+  },
+  {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567891",
+    "position": 2,
+    "filepath": "src/pages/slides/ArchitectureSlide.tsx",
+    "title": "Архитектура системы",
+    "description": "Три компонента: Scanner (Python), API Server (Node.js), Dashboard (React).",
+    "speakerNotes": ""
+  },
+  {
+    "id": "b2c3d4e5-f6a7-8901-bcde-f12345678902",
+    "position": 3,
+    "filepath": "src/pages/slides/StrategySlide.tsx",
+    "title": "Торговая стратегия",
+    "description": "EMA 20/80 + ADX + ATR на свечах 4H. Условия входа для LONG и SHORT.",
+    "speakerNotes": ""
+  },
+  {
+    "id": "c3d4e5f6-a7b8-9012-cdef-123456789013",
+    "position": 4,
+    "filepath": "src/pages/slides/RiskSlide.tsx",
+    "title": "Управление рисками",
+    "description": "SL = 5.5 ATR, TP = 7.0 ATR, R/R 1:1.27, плечо 15×, размер позиции 10%.",
+    "speakerNotes": ""
+  },
+  {
+    "id": "d4e5f6a7-b8c9-0123-defa-234567890124",
+    "position": 5,
+    "filepath": "src/pages/slides/DcaSlide.tsx",
+    "title": "DCA стратегия",
+    "description": "Dollar Cost Averaging: до 10 входов, триггер -20% залога, интервал 1ч.",
+    "speakerNotes": ""
+  },
+  {
+    "id": "e5f6a7b8-c9d0-1234-efab-345678901235",
+    "position": 6,
+    "filepath": "src/pages/slides/ScannerSlide.tsx",
+    "title": "Сканер рынка",
+    "description": "109 токенов BingX, параллельные запросы, ранжирование по ADX.",
+    "speakerNotes": ""
+  },
+  {
+    "id": "f6a7b8c9-d0e1-2345-fabc-456789012346",
+    "position": 7,
+    "filepath": "src/pages/slides/TelegramSlide.tsx",
+    "title": "Telegram уведомления",
+    "description": "Типы нотификаций, примеры сообщений об открытии позиции, DCA, закрытии.",
+    "speakerNotes": ""
+  },
+  {
+    "id": "a7b8c9d0-e1f2-3456-abcd-567890123457",
+    "position": 8,
+    "filepath": "src/pages/slides/DashboardSlide.tsx",
+    "title": "Dashboard и API",
+    "description": "Панель управления: мониторинг, статистика, REST API эндпоинты.",
+    "speakerNotes": ""
+  },
+  {
+    "id": "b8c9d0e1-f2a3-4567-bcde-678901234568",
+    "position": 9,
+    "filepath": "src/pages/slides/StatsSlide.tsx",
+    "title": "Параметры системы",
+    "description": "Ключевые метрики: все константы стратегии на одном слайде.",
+    "speakerNotes": ""
+  },
+  {
+    "id": "c9d0e1f2-a3b4-5678-cdef-789012345679",
+    "position": 10,
+    "filepath": "src/pages/slides/ClosingSlide.tsx",
+    "title": "Tech Stack",
+    "description": "Стек технологий и итоговый слайд.",
+    "speakerNotes": ""
+  }
+]
