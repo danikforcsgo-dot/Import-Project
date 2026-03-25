@@ -104,6 +104,22 @@ export function useClearTelegramMessages() {
   });
 }
 
+export function useReconcilePositions() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/live-trading/reconcile", { method: "POST" });
+      const data = await res.json() as { success?: boolean; before?: number; after?: number; removed?: number; bxOpen?: number; error?: string };
+      if (!res.ok || !data.success) throw new Error(data.error || "Failed to reconcile");
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/live-trading"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/live-trading/balance"] });
+    },
+  });
+}
+
 export function useSleepMode() {
   const queryClient = useQueryClient();
 

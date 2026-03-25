@@ -414,4 +414,60 @@ router.post("/live-trading/close-position", async (req, res) => {
   }
 });
 
+// POST /live-trading/reconcile
+// Читает реальные позиции с BingX и убирает из БД те, которых больше нет на бирже.
+router.post("/live-trading/reconcile", async (req, res) => {
+  const apiKey = process.env.BINGX_API_KEY;
+  const secretKey = process.env.BINGX_SECRET_KEY;
+  if (!apiKey || !secretKey) {
+    return res.status(400).json({ error: "API keys not configured" });
+  }
+
+  try {
+    // 1. Реальные открытые позиции на BingX (только с ненулевым qty)
+    const bxResp = await bingxGet("/openApi/swap/v2/user/positions", { symbol: "" }, apiKey, secretKey) as {
+      data?: Array<{ symbol?: string; positionAmt?: string }>;
+    };
+    const bxPositions = (bxResp.data ?? []).filter(p => Math.abs(parseFloat(p.positionAmt ?? "0")) > 0);
+    const bxSymbols = new Set(bxPositions.map(p => (p.symbol ?? "").toLowerCase()));
+
+    req.log.info({ bxCount: bxPositions.length, symbols: [...bxSymbols] }, "BingX open positions for reconcile");
+
+    // 2. Текущее состояние в БД
+    const state = await getTradingState("live");
+    const dbPositions = (state.open_positions as Record<string, unknown>[] | null) ?? [];
+
+    // 3. Оставляем только позиции, которые реально открыты на BingX
+    const kept = dbPositions.filter(pos => {
+      const sym = ((pos.bingx_symbol as string) || (pos.symbol as string) || "").toLowerCase();
+      // bingx_symbol = "CFX-USDT", bxSymbols содержат "CFX-USDT"
+      return bxSymbols.has(sym);
+    });
+
+    const removed = dbPositions.length - kept.length;
+
+    // 4. Обновляем состояние
+    const updatedState: Record<string, unknown> = {
+      ...state,
+      open_positions: kept,
+      open_position: kept[0] ?? null,
+    };
+    await saveTradingState("live", updatedState);
+    writeLiveFile(updatedState);
+
+    req.log.info({ before: dbPositions.length, after: kept.length, removed }, "Reconcile done");
+
+    res.json({
+      success: true,
+      before: dbPositions.length,
+      after: kept.length,
+      removed,
+      bxOpen: bxPositions.length,
+    });
+  } catch (err) {
+    req.log.error(err, "Failed to reconcile positions");
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 export default router;

@@ -5,7 +5,7 @@ import { BotPanel } from "@/components/BotPanel";
 import { StatisticsPanel } from "@/components/StatisticsPanel";
 import { MarketsPanel } from "@/components/MarketsPanel";
 import { Button } from "@/components/ui/button";
-import { useLiveState, useLiveControls, useBingxBalance, useClearTelegramMessages, usePositionPnl, useSleepMode } from "@/hooks/use-kokojambo";
+import { useLiveState, useLiveControls, useBingxBalance, useClearTelegramMessages, usePositionPnl, useSleepMode, useReconcilePositions } from "@/hooks/use-kokojambo";
 import { useState } from "react";
 
 export default function Dashboard() {
@@ -17,6 +17,7 @@ export default function Dashboard() {
   const { data: positionPnl } = usePositionPnl(hasOpenPos);
   const clearTg = useClearTelegramMessages();
   const { isSleepMode, toggle: sleepToggle } = useSleepMode();
+  const reconcile = useReconcilePositions();
   const [tgConfirm, setTgConfirm] = useState(false);
   const [tgResult, setTgResult] = useState<string | null>(null);
 
@@ -142,6 +143,8 @@ export default function Dashboard() {
               isToggling={toggleLive.isPending}
               onClosePosition={(token) => closePositionMutation.mutate(token)}
               isClosing={closePositionMutation.isPending}
+              onReconcile={() => reconcile.mutate()}
+              isReconciling={reconcile.isPending}
             />
           </motion.div>
 

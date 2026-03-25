@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { Target, X, TrendingDown, Layers } from "lucide-react";
+import { Target, X, TrendingDown, Layers, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,8 @@ interface BotPanelProps {
   isToggling?: boolean;
   onClosePosition?: (token: string) => void;
   isClosing?: boolean;
+  onReconcile?: () => void;
+  isReconciling?: boolean;
 }
 
 interface LocalOpenPos {
@@ -71,7 +73,7 @@ function useTick(intervalMs = 1000) {
   return now;
 }
 
-export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, isToggling, onClosePosition, isClosing }: BotPanelProps) {
+export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, isToggling, onClosePosition, isClosing, onReconcile, isReconciling }: BotPanelProps) {
   const [confirmClose, setConfirmClose] = useState<string | null>(null);
   const now = useTick(1000);
   const isEnabled = data.enabled ?? false;
@@ -137,11 +139,26 @@ export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, 
         <div>
           <div className="text-xs font-bold text-muted-foreground mb-1.5 flex items-center gap-1.5 uppercase tracking-widest">
             <Target className="w-3.5 h-3.5" /> Active Position
-            {openPositions.length > 0 && (
-              <span className="ml-auto text-xs font-mono font-normal">
-                {openPositions.length}/{STRATEGY.maxPositions}
-              </span>
-            )}
+            <div className="ml-auto flex items-center gap-2">
+              {openPositions.length > 0 && (
+                <span className="text-xs font-mono font-normal">
+                  {openPositions.length}/{STRATEGY.maxPositions}
+                </span>
+              )}
+              {onReconcile && (
+                <button
+                  onClick={onReconcile}
+                  disabled={isReconciling}
+                  title="Синхронизировать позиции с BingX"
+                  className={cn(
+                    "p-1 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                    isReconciling && "opacity-50 cursor-not-allowed"
+                  )}
+                >
+                  <RefreshCw className={cn("w-3 h-3", isReconciling && "animate-spin")} />
+                </button>
+              )}
+            </div>
           </div>
 
           <AnimatePresence mode="popLayout">
