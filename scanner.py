@@ -153,10 +153,10 @@ TRAIL_PCT = 0.01   # Трейлинг-стоп: 1% от лучшей цены (=
 TIMEFRAME = '4h'
 
 # === DCA ПАРАМЕТРЫ ===
-POSITION_SIZE_PCT  = 0.10  # каждый вход — 10% баланса
-MAX_DCA_ENTRIES    = 10    # максимум 10 входов (итого 100% баланса)
-DCA_MIN_INTERVAL   = 3600  # минимум 1 час между DCA-входами (анти-спам)
-DCA_PRICE_DROP_PCT = 0.01  # DCA срабатывает когда цена ушла на 1% от среднего входа (~-15% P&L при 15x)
+POSITION_SIZE_PCT   = 0.10  # каждый вход — 10% баланса
+MAX_DCA_ENTRIES     = 10    # максимум 10 входов (итого 100% баланса)
+DCA_MIN_INTERVAL    = 3600  # минимум 1 час между DCA-входами (анти-спам)
+DCA_DEPOT_LOSS_PCT  = 0.15  # DCA срабатывает когда убыток позиции >= 15% от баланса депозита
 MAX_POSITIONS      = 2     # максимум одновременных позиций (открывается только если все остальные в плюсе)
 
 # === ПОДКЛЮЧЕНИЕ К BINGX ===
@@ -998,26 +998,22 @@ def _dca_single_position(pos: dict, state: dict) -> bool:
         print(f"⏭️ DCA {sym}: позиция в плюсе ({unrealized:+.4f} USDT) — DCA не нужен", flush=True)
         return False
 
-    # Ценовой триггер: DCA только если цена ушла на DCA_PRICE_DROP_PCT% от среднего входа
-    if not current_price or current_price <= 0:
-        print(f"⏭️ DCA {sym}: не удалось получить текущую цену — пропускаем", flush=True)
-        return False
-
-    avg_entry = pos.get('entry_price', 0)
-    if avg_entry > 0:
-        if is_long:
-            price_drop = (avg_entry - current_price) / avg_entry
-        else:
-            price_drop = (current_price - avg_entry) / avg_entry
-        if price_drop < DCA_PRICE_DROP_PCT:
-            print(f"⏭️ DCA {sym}: цена отклонилась лишь на {price_drop:.2%} (нужно ≥{DCA_PRICE_DROP_PCT:.0%}) — ждём", flush=True)
-            return False
-        print(f"📉 DCA {sym}: цена упала на {price_drop:.2%} от ср. входа — триггер!", flush=True)
-
+    # Получаем баланс для расчёта порога убытка
     balance = get_bingx_balance()
     if balance <= 0:
         print("⚠️ DCA: нулевой баланс — пропускаем", flush=True)
         return False
+
+    # Триггер: DCA срабатывает когда убыток позиции >= DCA_DEPOT_LOSS_PCT от баланса депо
+    depot_loss_pct = abs(unrealized) / balance
+    if depot_loss_pct < DCA_DEPOT_LOSS_PCT:
+        print(
+            f"⏭️ DCA {sym}: убыток {unrealized:+.4f} USDT = -{depot_loss_pct:.1%} депо "
+            f"(нужно ≥-{DCA_DEPOT_LOSS_PCT:.0%}) — ждём",
+            flush=True
+        )
+        return False
+    print(f"📉 DCA {sym}: убыток -{depot_loss_pct:.1%} депо ({unrealized:+.4f} USDT) — триггер!", flush=True)
 
     entry_price = current_price or pos.get('entry_price', 1)
     add_collateral = balance * POSITION_SIZE_PCT
@@ -1067,7 +1063,7 @@ def _dca_single_position(pos: dict, state: dict) -> bool:
         f"💰 Добавлено:  <b>${actual_add_price:,.4f}</b>  (+{add_collateral:,.2f} USDT)\n"
         f"📈 Ср. вход:   <b>${avg_entry:,.4f}</b>\n"
         f"📦 Залог итого: ${new_collateral:,.2f} USDT\n"
-        f"📉 P&L до DCA: <b>{unrealized:+.4f} USDT</b>\n"
+        f"📉 P&L до DCA: <b>{unrealized:+.4f} USDT</b>  ({-depot_loss_pct:.1%} депо)\n"
         f"🔢 Вход:       {new_entries} / {MAX_DCA_ENTRIES}\n"
         f"⏰ {datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')}"
     )
