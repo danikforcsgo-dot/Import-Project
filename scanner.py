@@ -141,7 +141,8 @@ TOKENS = [
 # === ПАРАМЕТРЫ СТРАТЕГИИ ===
 EMA_FAST = 20
 EMA_SLOW = 80
-ADX_MIN = 15
+ADX_MIN = 15       # минимум для генерации сигнала
+OPEN_MIN_ADX = 25  # минимум для ОТКРЫТИЯ позиции (сильный тренд)
 EMA_BUFFER = 0.0    # без буфера — как в TV-скрипте
 RSI_PERIOD = 14
 RSI_MIN = 50
@@ -2236,7 +2237,15 @@ def main():
             ranked = sorted(scan_pending_signals, key=_score, reverse=True)
             current_cnt = len(live_state.get('open_positions') or [])
             slots = max(0, MAX_POSITIONS - current_cnt)
-            opening_cnt = min(slots, len(ranked)) if bot_enabled else 0
+
+            # Из всех сигналов оставляем только те, где ADX >= OPEN_MIN_ADX (сильный тренд)
+            _openable = [it for it in ranked
+                         if float(it['signal'].get('adx', 0) or 0) >= OPEN_MIN_ADX]
+            opening_cnt = min(slots, len(_openable)) if bot_enabled else 0
+
+            if bot_enabled and slots > 0 and ranked and not _openable:
+                _best_adx = float(ranked[0]['signal'].get('adx', 0) or 0)
+                print(f"⏭️ Сигналы есть, но ADX слабый (лучший {_best_adx:.1f} < {OPEN_MIN_ADX}) — позиции не открываем", flush=True)
 
             # ── Отправляем ЕДИНОЕ сообщение с полным рейтингом ────────────────
             # Защита от дублей: не отправляем рейтинг дважды за одну 4H свечу
@@ -2259,10 +2268,13 @@ def main():
                     sl      = float(sig.get('sl', 0))
                     tp_pct  = abs((tp - price) / price * 100 * LIVE_LEVERAGE) if tp and price else 0
                     sl_pct  = abs((sl - price) / price * 100 * LIVE_LEVERAGE) if sl and price else 0
-                    if idx < opening_cnt:
+                    _adx_ok = float(sig.get('adx', 0) or 0) >= OPEN_MIN_ADX
+                    if item in _openable and _openable.index(item) < opening_cnt:
                         mark = '✅'
                     elif bot_enabled and slots == 0:
                         mark = '🔒'
+                    elif not _adx_ok:
+                        mark = '〰️'  # сигнал есть, но ADX слабый
                     else:
                         mark = '⏭️'
                     num = f"{idx+1}."
@@ -2271,8 +2283,10 @@ def main():
                         f"   ADX {adx_v:.1f}  ·  score {score:.1f}"
                     )
 
-                if bot_enabled and slots > 0:
+                if bot_enabled and slots > 0 and opening_cnt > 0:
                     header = f"🏆 <b>Рейтинг сигналов — открываем {opening_cnt}</b>"
+                elif bot_enabled and slots > 0 and not _openable:
+                    header = f"〰️ <b>Слабый тренд — ADX &lt; {OPEN_MIN_ADX}, позиции не открываем</b>"
                 elif bot_enabled and slots == 0:
                     header = f"🔒 <b>Рейтинг сигналов — нет слотов ({MAX_POSITIONS}/{MAX_POSITIONS})</b>"
                 else:
@@ -2304,7 +2318,7 @@ def main():
                 print(f"⏭️ Открытие позиций пропущено — рейтинг этой свечи уже обработан", flush=True)
             else:
                 # Followup-трекинг для выбранных сигналов (только те, что реально откроем)
-                for idx, item in enumerate(ranked[:opening_cnt]):
+                for idx, item in enumerate(_openable[:opening_cnt]):
                     sig = item['signal']
                     sym = item['sym']
                     is_long = sig['signal'] == 'BUY'
@@ -2316,7 +2330,7 @@ def main():
                     add_signal_followup(fwd_id, item['token'], sig['signal'], sig['price'], fwd_msg)
 
                 if bot_enabled:
-                    for item in ranked[:opening_cnt]:
+                    for item in _openable[:opening_cnt]:
                         # Перепроверяем enabled прямо перед каждым открытием.
                         # is_bot_enabled() читает из DB через API — работает и в dev и в prod.
                         if not is_bot_enabled():
