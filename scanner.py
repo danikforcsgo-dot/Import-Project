@@ -156,7 +156,8 @@ TIMEFRAME = '4h'
 POSITION_SIZE_PCT   = 0.10  # каждый вход — 10% баланса
 MAX_DCA_ENTRIES     = 10    # максимум 10 входов (итого 100% баланса)
 DCA_MIN_INTERVAL    = 3600  # минимум 1 час между DCA-входами (анти-спам)
-DCA_DEPOT_LOSS_PCT  = 0.15  # DCA срабатывает когда убыток позиции >= 15% от баланса депозита
+DCA_LOSS_PCT        = 0.15  # DCA срабатывает когда убыток >= 15% от залога позиции
+                            # (при 15х плечо = ~1% движение цены против позиции)
 MAX_POSITIONS      = 2     # максимум одновременных позиций (открывается только если все остальные в плюсе)
 
 # === ПОДКЛЮЧЕНИЕ К BINGX ===
@@ -998,22 +999,30 @@ def _dca_single_position(pos: dict, state: dict) -> bool:
         print(f"⏭️ DCA {sym}: позиция в плюсе ({unrealized:+.4f} USDT) — DCA не нужен", flush=True)
         return False
 
-    # Получаем баланс для расчёта порога убытка
+    # Получаем текущий залог позиции (растёт с каждым DCA-входом)
+    pos_collateral = pos.get('collateral', 0)
+    if pos_collateral <= 0:
+        # залог не сохранён — пропускаем DCA (позиция откроется с нужным залогом при следующем входе)
+        print(f"⚠️ DCA {sym}: залог позиции не найден — пропускаем", flush=True)
+        return False
+
+    # Триггер: DCA срабатывает когда убыток >= DCA_LOSS_PCT от ЗАЛОГА позиции
+    # При 15х плечо: 15% от залога = ~1% движение цены против позиции
+    collateral_loss_pct = abs(unrealized) / pos_collateral
+    if collateral_loss_pct < DCA_LOSS_PCT:
+        print(
+            f"⏭️ DCA {sym}: убыток {unrealized:+.4f} USDT = -{collateral_loss_pct:.1%} залога "
+            f"(нужно ≥-{DCA_LOSS_PCT:.0%}) — ждём",
+            flush=True
+        )
+        return False
+    print(f"📉 DCA {sym}: убыток -{collateral_loss_pct:.1%} залога ({unrealized:+.4f} USDT) — триггер!", flush=True)
+
+    # Получаем баланс для расчёта размера нового входа
     balance = get_bingx_balance()
     if balance <= 0:
         print("⚠️ DCA: нулевой баланс — пропускаем", flush=True)
         return False
-
-    # Триггер: DCA срабатывает когда убыток позиции >= DCA_DEPOT_LOSS_PCT от баланса депо
-    depot_loss_pct = abs(unrealized) / balance
-    if depot_loss_pct < DCA_DEPOT_LOSS_PCT:
-        print(
-            f"⏭️ DCA {sym}: убыток {unrealized:+.4f} USDT = -{depot_loss_pct:.1%} депо "
-            f"(нужно ≥-{DCA_DEPOT_LOSS_PCT:.0%}) — ждём",
-            flush=True
-        )
-        return False
-    print(f"📉 DCA {sym}: убыток -{depot_loss_pct:.1%} депо ({unrealized:+.4f} USDT) — триггер!", flush=True)
 
     entry_price = current_price or pos.get('entry_price', 1)
     add_collateral = balance * POSITION_SIZE_PCT
@@ -1063,7 +1072,7 @@ def _dca_single_position(pos: dict, state: dict) -> bool:
         f"💰 Добавлено:  <b>${actual_add_price:,.4f}</b>  (+{add_collateral:,.2f} USDT)\n"
         f"📈 Ср. вход:   <b>${avg_entry:,.4f}</b>\n"
         f"📦 Залог итого: ${new_collateral:,.2f} USDT\n"
-        f"📉 P&L до DCA: <b>{unrealized:+.4f} USDT</b>  ({-depot_loss_pct:.1%} депо)\n"
+        f"📉 P&L до DCA: <b>{unrealized:+.4f} USDT</b>  (-{collateral_loss_pct:.0%} залога)\n"
         f"🔢 Вход:       {new_entries} / {MAX_DCA_ENTRIES}\n"
         f"⏰ {datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')}"
     )
@@ -1466,38 +1475,40 @@ def _build_position_analysis() -> str | None:
         )
 
         # ─── Блок 2: DCA анализ ───
-        if current_price and entry_price > 0:
+        # Триггер DCA: убыток >= DCA_LOSS_PCT (15%) от залога позиции
+        # При 15х плечо: 15% залога ≈ 1% движение цены против позиции
+        if collateral > 0 and entry_price > 0 and qty > 0:
+            current_loss_usdt = abs(unrealized) if (unrealized is not None and unrealized < 0) else 0
+            target_loss_usdt  = collateral * DCA_LOSS_PCT
+            current_loss_pct  = current_loss_usdt / collateral * 100  # % от залога
+
+            # Цена при которой сработает следующий DCA
             if is_long:
-                drop_pct = (entry_price - current_price) / entry_price * 100
+                next_dca_price = entry_price - target_loss_usdt / qty
             else:
-                drop_pct = (current_price - entry_price) / entry_price * 100
-            need_pct = DCA_PRICE_DROP_PCT * 100
+                next_dca_price = entry_price + target_loss_usdt / qty
+
+            add_collateral = (balance or collateral) * POSITION_SIZE_PCT
+            add_qty = add_collateral * LIVE_LEVERAGE / (next_dca_price if next_dca_price > 0 else entry_price)
+            new_qty = qty + add_qty
+            new_avg = (entry_price * qty + next_dca_price * add_qty) / new_qty if new_qty > 0 else entry_price
 
             if dca_entries >= MAX_DCA_ENTRIES:
                 dca_line = "⛔ Все DCA входы исчерпаны — новых докупок не будет"
-            elif drop_pct >= need_pct:
+            elif current_loss_usdt >= target_loss_usdt:
                 dca_line = "🔔 <b>DCA готов сработать прямо сейчас!</b> Ждём следующую проверку"
             else:
-                remaining_pct = need_pct - drop_pct
-                # Считаем новый средний вход после следующего DCA
-                add_collateral = (balance or collateral) * POSITION_SIZE_PCT
-                add_value = add_collateral * LIVE_LEVERAGE
-                add_qty = add_value / (current_price or entry_price)
-                if is_long:
-                    next_dca_price = entry_price * (1 - need_pct / 100)
-                else:
-                    next_dca_price = entry_price * (1 + need_pct / 100)
-                new_qty = qty + add_qty
-                new_avg = (entry_price * qty + next_dca_price * add_qty) / new_qty if new_qty > 0 else entry_price
+                remaining_usdt = target_loss_usdt - current_loss_usdt
                 dca_line = (
-                    f"📏 Цена откл. от входа: {drop_pct:.2f}%  (нужно ещё {remaining_pct:.2f}% для DCA)\n"
+                    f"📏 Убыток: <b>-{current_loss_pct:.1f}%</b> от залога  "
+                    f"(нужно -{DCA_LOSS_PCT*100:.0f}%, осталось −${remaining_usdt:.2f} USDT)\n"
                     f"   Следующий DCA сработает при цене ≈ <b>${next_dca_price:,.4f}</b>\n"
                     f"   После DCA новый средний вход станет ≈ <b>${new_avg:,.4f}</b>"
                 )
 
             block2 = f"\n📐 <b>DCA Стратегия</b>\n{dca_line}"
         else:
-            block2 = "\n📐 <b>DCA Стратегия</b>\n⚪ Нет данных о цене"
+            block2 = "\n📐 <b>DCA Стратегия</b>\n⚪ Нет данных о позиции"
 
         # ─── Блок 3: Сценарии (что если) ───
         scenario_lines = ["\n🎯 <b>Сценарии развития</b>"]
