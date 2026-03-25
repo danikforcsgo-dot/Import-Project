@@ -2164,7 +2164,12 @@ def main():
 
         # ── Логируем время скана ────────────────────────────────────────────────
         scan_elapsed = (datetime.now() - scan_start).total_seconds()
+        _s1_msg = (
+            f"🔍 <b>Скан 1/2 завершён</b> за {scan_elapsed:.0f}с\n"
+            f"   {len(TOKENS)} токенов  ·  {scan_signals_this_round} сигналов"
+        )
         print(f"⏱️ Скан 1/2 завершён за {scan_elapsed:.1f}с | {len(TOKENS)} токенов | {scan_signals_this_round} сигналов", flush=True)
+        send_telegram(_s1_msg, force=True)
 
         # ── ВТОРОЙ СКАН: повторно проверяем токены, которых не было в скане 1 ──
         # Цель: поймать токены с таймаутами в скане 1 и собрать больше сигналов
@@ -2194,9 +2199,20 @@ def main():
                             print(f"✅ [скан2] {signal2['signal']} Signal: {token2} @ ${signal2['price']:,.6f}", flush=True)
                             scan_pending_signals.append({'signal': signal2, 'token': token2, 'sym': sym2})
                 scan2_elapsed = (datetime.now() - scan2_start).total_seconds()
+                _s2_msg = (
+                    f"🔍 <b>Скан 2/2 завершён</b> за {scan2_elapsed:.0f}с\n"
+                    f"   {len(_tokens_for_scan2)} токенов  ·  +{scan2_found} новых сигналов\n"
+                    f"   Итого: {len(scan_pending_signals)} сигналов — ранжируем"
+                )
                 print(f"⏱️ Скан 2/2 завершён за {scan2_elapsed:.1f}с | {len(_tokens_for_scan2)} токенов | {scan2_found} новых сигналов", flush=True)
+                send_telegram(_s2_msg, force=True)
             else:
+                _s2_skip = (
+                    f"⏭️ <b>Скан 2/2 пропущен</b> — все {len(TOKENS)} токенов уже дали сигналы\n"
+                    f"   Ранжируем {len(scan_pending_signals)} сигналов"
+                )
                 print(f"⏭️ Скан 2/2 пропущен — все {len(TOKENS)} токенов уже дали сигналы в скане 1", flush=True)
+                send_telegram(_s2_skip, force=True)
 
         # ── Сохраняем кулдауны и ранжируем сигналы ────────────────────────────
         if paused_mid_scan:
