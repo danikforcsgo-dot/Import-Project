@@ -426,27 +426,63 @@ router.post("/live-trading/reconcile", async (req, res) => {
   try {
     // 1. Реальные открытые позиции на BingX (только с ненулевым qty)
     const bxResp = await bingxGet("/openApi/swap/v2/user/positions", { symbol: "" }, apiKey, secretKey) as {
-      data?: Array<{ symbol?: string; positionAmt?: string }>;
+      data?: Array<{
+        symbol?: string;
+        positionAmt?: string;
+        avgPrice?: string;
+        initialMargin?: string;
+        unrealizedProfit?: string;
+        positionSide?: string;
+        markPrice?: string;
+        leverage?: string;
+      }>;
     };
-    const bxPositions = (bxResp.data ?? []).filter(p => Math.abs(parseFloat(p.positionAmt ?? "0")) > 0);
-    const bxSymbols = new Set(bxPositions.map(p => (p.symbol ?? "").toLowerCase()));
 
-    req.log.info({ bxCount: bxPositions.length, symbols: [...bxSymbols] }, "BingX open positions for reconcile");
+    const bxPositions = (bxResp.data ?? []).filter(p => Math.abs(parseFloat(p.positionAmt ?? "0")) > 0);
+
+    // Индекс по символу (lowercase) для быстрого поиска
+    const bxBySymbol = new Map<string, typeof bxPositions[0]>();
+    for (const p of bxPositions) {
+      bxBySymbol.set((p.symbol ?? "").toLowerCase(), p);
+    }
+
+    req.log.info({ bxCount: bxPositions.length, symbols: [...bxBySymbol.keys()] }, "BingX open positions for reconcile");
 
     // 2. Текущее состояние в БД
     const state = await getTradingState("live");
     const dbPositions = (state.open_positions as Record<string, unknown>[] | null) ?? [];
 
-    // 3. Оставляем только позиции, которые реально открыты на BingX
-    const kept = dbPositions.filter(pos => {
-      const sym = ((pos.bingx_symbol as string) || (pos.symbol as string) || "").toLowerCase();
-      // bingx_symbol = "CFX-USDT", bxSymbols содержат "CFX-USDT"
-      return bxSymbols.has(sym);
-    });
+    let removed = 0;
+    let updated = 0;
 
-    const removed = dbPositions.length - kept.length;
+    // 3. Фильтруем + обновляем данные из BingX
+    const kept = dbPositions
+      .filter(pos => {
+        const sym = ((pos.bingx_symbol as string) || (pos.symbol as string) || "").toLowerCase();
+        if (!bxBySymbol.has(sym)) { removed++; return false; }
+        return true;
+      })
+      .map(pos => {
+        const sym = ((pos.bingx_symbol as string) || (pos.symbol as string) || "").toLowerCase();
+        const bx = bxBySymbol.get(sym);
+        if (!bx) return pos;
 
-    // 4. Обновляем состояние
+        const bxQty        = Math.abs(parseFloat(bx.positionAmt ?? "0"));
+        const bxAvgPrice   = parseFloat(bx.avgPrice ?? "0");
+        const bxCollateral = parseFloat(bx.initialMargin ?? "0");
+        const bxUnrealized = parseFloat(bx.unrealizedProfit ?? "0");
+
+        // Обновляем только если BingX вернул валидные данные
+        const merged: Record<string, unknown> = { ...pos };
+        if (bxQty > 0)        { merged.qty = bxQty; updated++; }
+        if (bxAvgPrice > 0)   { merged.entry_price = bxAvgPrice; }
+        if (bxCollateral > 0) { merged.collateral = bxCollateral; }
+        merged.unrealized = bxUnrealized;
+
+        return merged;
+      });
+
+    // 4. Сохраняем обновлённое состояние
     const updatedState: Record<string, unknown> = {
       ...state,
       open_positions: kept,
@@ -455,13 +491,14 @@ router.post("/live-trading/reconcile", async (req, res) => {
     await saveTradingState("live", updatedState);
     writeLiveFile(updatedState);
 
-    req.log.info({ before: dbPositions.length, after: kept.length, removed }, "Reconcile done");
+    req.log.info({ before: dbPositions.length, after: kept.length, removed, updated }, "Reconcile done");
 
     res.json({
       success: true,
       before: dbPositions.length,
       after: kept.length,
       removed,
+      updated,
       bxOpen: bxPositions.length,
     });
   } catch (err) {
