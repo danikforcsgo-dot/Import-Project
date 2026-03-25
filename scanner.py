@@ -2032,6 +2032,25 @@ def main():
             time.sleep(_sleep_secs)
             continue
 
+        # Проверяем что свеча не "протухла" — бот мог быть выключен и пропустить закрытие свечи.
+        # Если с момента закрытия прошло больше 10 минут — пропускаем, не сканируем.
+        # (10 мин > settle(1 мин) + scan(2 мин) + буфер: нормальный скан укладывается в ~3-4 мин)
+        _STALE_THRESHOLD_SEC = 10 * 60  # 10 минут
+        _candle_age_sec = (_utc_now.timestamp() - _cur_candle_ts)
+        if _candle_age_sec > _STALE_THRESHOLD_SEC:
+            _msk_candle = datetime.fromtimestamp(_cur_candle_ts, TZ_MOSCOW).strftime('%H:%M МСК')
+            _next_dt = _utc_now.replace(hour=_cur_4h_hour, minute=0, second=0, microsecond=0) + timedelta(hours=4)
+            _msk_next = datetime.fromtimestamp(_next_dt.timestamp(), TZ_MOSCOW).strftime('%H:%M МСК %d.%m')
+            print(
+                f"⏭️ Свеча {_msk_candle} устарела ({_candle_age_sec/60:.0f} мин назад) — пропускаем, "
+                f"ждём следующей в {_msk_next}", flush=True
+            )
+            _write_last_scanned_ts_file(_cur_candle_ts)
+            update_scanner_status({"lastScannedCandleTs": _cur_candle_ts})
+            _next_sleep = max(30, (_next_dt - _utc_now).total_seconds())
+            time.sleep(_next_sleep)
+            continue
+
         # Помечаем свечу как "сканируется" ДО начала скана — защита от дублей при краше/перезапуске
         _write_last_scanned_ts_file(_cur_candle_ts)  # файловый бэкап — моментально
         update_scanner_status({"lastScannedCandleTs": _cur_candle_ts})
