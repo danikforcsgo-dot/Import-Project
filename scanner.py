@@ -235,6 +235,76 @@ def calc_adx(df, period=14):
     adx = dx.ewm(span=period, adjust=False).mean().fillna(0)
     return adx
 
+# === AI АГЕНТ-АНАЛИТИК ===
+_AI_BASE_URL = os.environ.get('AI_INTEGRATIONS_OPENAI_BASE_URL', '')
+_AI_API_KEY  = os.environ.get('AI_INTEGRATIONS_OPENAI_API_KEY', '')
+
+def ai_analyze_signals(ranked: list) -> str:
+    """Отправляет топ-сигналы AI-агенту и получает краткий анализ.
+    Возвращает строку для вставки в Telegram-сообщение.
+    При любой ошибке — тихо возвращает пустую строку."""
+    if not _AI_BASE_URL or not ranked:
+        return ''
+    try:
+        lines = []
+        for idx, item in enumerate(ranked[:10], 1):
+            sig     = item['signal']
+            sym     = item['sym']
+            is_long = sig['signal'] == 'BUY'
+            adx     = float(sig.get('adx', 0) or 0)
+            atr     = float(sig.get('atr', 0) or 0)
+            price   = float(sig.get('price', 0) or 0)
+            tp      = float(sig.get('tp', 0) or 0)
+            sl      = float(sig.get('sl', 0) or 0)
+            rsi     = float(sig.get('rsi', 0) or 0)
+            tp_pct  = abs((tp - price) / price * 100) if tp and price else 0
+            sl_pct  = abs((sl - price) / price * 100) if sl and price else 0
+            lines.append(
+                f"{idx}. {sym} {'LONG' if is_long else 'SHORT'} | "
+                f"ADX={adx:.1f} | RSI={rsi:.1f} | ATR={atr:.5f} | "
+                f"TP={tp_pct:.2f}% | SL={sl_pct:.2f}%"
+            )
+
+        signals_text = '\n'.join(lines)
+        prompt = (
+            "Ты — профессиональный аналитик крипто-фьючерсов. "
+            "Система KokojamboTrade торгует на BingX с плечом 15×, таймфрейм 4H, "
+            "стратегия: пересечение EMA20/EMA80 + подтверждение ADX + ATR-стопы.\n\n"
+            f"Топ сигналы текущего цикла (ранжированы по силе):\n{signals_text}\n\n"
+            "Для каждого сигнала дай:\n"
+            "- Оценку: СИЛЬНЫЙ / УМЕРЕННЫЙ / СЛАБЫЙ\n"
+            "- Одну фразу с обоснованием (ADX, RSI, TP/SL)\n\n"
+            "Затем укажи ЛУЧШИЙ ВЫБОР и кратко почему.\n\n"
+            "Формат ответа (строго):\n"
+            "1. SYMBOL: СИЛЬНЫЙ — причина\n"
+            "2. SYMBOL: УМЕРЕННЫЙ — причина\n"
+            "...\n"
+            "Лучший выбор: SYMBOL — причина\n\n"
+            "Отвечай на русском. Максимально кратко."
+        )
+
+        resp = requests.post(
+            f"{_AI_BASE_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {_AI_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-5-mini",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_completion_tokens": 600
+            },
+            timeout=20
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        analysis = data['choices'][0]['message']['content'].strip()
+        return f"\n\n🤖 <b>AI-аналитик:</b>\n<i>{analysis}</i>"
+    except Exception as e:
+        print(f"[AI] Анализ сигналов не удался: {e}", flush=True)
+        return ''
+
+
 # === TELEGRAM ===
 TG_MSG_IDS_FILE = "tg_message_ids.json"
 _tg_ids_lock = threading.Lock()
@@ -2299,11 +2369,14 @@ def main():
                 else:
                     header = f"⏸️ <b>Рейтинг сигналов — бот выключен</b>"
 
+                ai_block = ai_analyze_signals(ranked)
+
                 consolidated = (
                     f"{header}\n"
                     f"⏰ {now_str}\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     + "\n\n".join(rank_lines)
+                    + ai_block
                 )
                 ranking_msg_id = send_telegram(consolidated, force=True)
 
