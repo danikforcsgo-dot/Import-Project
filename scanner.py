@@ -666,13 +666,28 @@ def bingx_symbol(token: str) -> str:
 
 # === MEXC COPY BOT ФУНКЦИИ ===
 
+MEXC_SYMBOL_MAP = {
+    # Символы с другим названием на MEXC Futures
+    'FIL_USDT':        'FILECOIN_USDT',
+    'TRUMP_USDT':      'TRUMPOFFICIAL_USDT',
+    '1000PEPE_USDT':   'PEPE_USDT',
+    # PUMP — на MEXC нет прямого PUMP_USDT; копирование пропускается автоматически
+}
+
+# Символы которых нет на MEXC Futures — копирование молча пропускается
+MEXC_UNSUPPORTED = {'MATIC_USDT'}
+
+
 def mexc_symbol(token: str) -> str:
-    """BingX формат 'CFX-USDT' → MEXC формат 'CFX_USDT'"""
-    return (token
-            .replace('/USDT:USDT', '_USDT')
-            .replace('/USDC:USDC', '_USDC')
-            .replace('-USDT', '_USDT')
-            .replace('-USDC', '_USDC'))
+    """BingX формат 'CFX-USDT' → MEXC формат 'CFX_USDT', с учётом переименований."""
+    raw = (token
+           .replace('/USDT:USDT', '_USDT')
+           .replace('/USDC:USDC', '_USDC')
+           .replace('-USDT', '_USDT')
+           .replace('-USDC', '_USDC'))
+    if raw in MEXC_UNSUPPORTED:
+        return ''
+    return MEXC_SYMBOL_MAP.get(raw, raw)
 
 
 def _mexc_sign(timestamp: str, params_str: str) -> str:
@@ -732,6 +747,9 @@ def mexc_copy_open(token: str, direction: str, entry_price: float) -> float:
     if not MEXC_COPY_ENABLED:
         return 0.0
     sym = mexc_symbol(token)
+    if not sym:
+        print(f"⚠️ MEXC copy: символ {token} не поддерживается — пропускаем", flush=True)
+        return 0.0
     is_long = direction == 'BUY'
     open_side = 1 if is_long else 3
 
