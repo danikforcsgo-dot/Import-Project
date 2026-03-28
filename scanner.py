@@ -610,13 +610,6 @@ BINGX_BASE = "https://open-api.bingx.com"
 BINGX_API_KEY = os.environ.get('BINGX_API_KEY', '')
 BINGX_SECRET_KEY = os.environ.get('BINGX_SECRET_KEY', '')
 
-# === MEXC COPY BOT ===
-MEXC_API_KEY = os.environ.get('MEXC_API_KEY', '')
-MEXC_SECRET_KEY = os.environ.get('MEXC_SECRET_KEY', '')
-MEXC_BASE = "https://contract.mexc.com"
-MEXC_COPY_ENABLED = bool(MEXC_API_KEY and MEXC_SECRET_KEY)
-COPY_LEVERAGE = 15
-COPY_SIZE_PCT = 0.10
 
 
 def _bingx_sign(params: dict) -> str:
@@ -662,184 +655,6 @@ def bingx_symbol(token: str) -> str:
     if token in BINGX_SYMBOL_MAP:
         return BINGX_SYMBOL_MAP[token]
     return token.replace('/USDT:USDT', '-USDT').replace('/USDC:USDC', '-USDC')
-
-
-# === MEXC COPY BOT ФУНКЦИИ ===
-
-MEXC_SYMBOL_MAP = {
-    # Символы с другим названием на MEXC Futures
-    'FIL_USDT':        'FILECOIN_USDT',
-    'TRUMP_USDT':      'TRUMPOFFICIAL_USDT',
-    '1000PEPE_USDT':   'PEPE_USDT',
-    'ZK_USDT':         'ZKSYNC_USDT',
-    'PUMP_USDT':       'PUMPFUN_USDT',
-}
-
-# Символы которых нет на MEXC Futures — копирование молча пропускается
-MEXC_UNSUPPORTED = {'MATIC_USDT'}
-
-
-def mexc_symbol(token: str) -> str:
-    """BingX формат 'CFX-USDT' → MEXC формат 'CFX_USDT', с учётом переименований."""
-    raw = (token
-           .replace('/USDT:USDT', '_USDT')
-           .replace('/USDC:USDC', '_USDC')
-           .replace('-USDT', '_USDT')
-           .replace('-USDC', '_USDC'))
-    if raw in MEXC_UNSUPPORTED:
-        return ''
-    return MEXC_SYMBOL_MAP.get(raw, raw)
-
-
-def _mexc_sign(timestamp: str, params_str: str) -> str:
-    msg = MEXC_API_KEY + timestamp + params_str
-    return hmac.new(MEXC_SECRET_KEY.encode(), msg.encode(), digestmod=hashlib.sha256).hexdigest()
-
-
-def mexc_get_api(path: str, params: dict = None) -> dict:
-    ts = str(int(time.time() * 1000))
-    p = params or {}
-    param_str = urlencode(p)
-    sig = _mexc_sign(ts, param_str)
-    headers = {
-        'ApiKey': MEXC_API_KEY,
-        'Request-Time': ts,
-        'Signature': sig,
-        'Content-Type': 'application/json',
-    }
-    resp = requests.get(f"{MEXC_BASE}{path}?{param_str}", headers=headers, timeout=15)
-    return resp.json()
-
-
-def mexc_post_api(path: str, body: dict = None) -> dict:
-    ts = str(int(time.time() * 1000))
-    b = body or {}
-    body_str = json.dumps(b)
-    sig = _mexc_sign(ts, body_str)
-    headers = {
-        'ApiKey': MEXC_API_KEY,
-        'Request-Time': ts,
-        'Signature': sig,
-        'Content-Type': 'application/json',
-    }
-    resp = requests.post(f"{MEXC_BASE}{path}", headers=headers, data=body_str, timeout=15)
-    return resp.json()
-
-
-def mexc_get_balance() -> float:
-    """Получаем доступный баланс USDT на MEXC Futures."""
-    try:
-        resp = mexc_get_api('/api/v1/private/account/assets')
-        assets = resp.get('data', []) or []
-        for asset in assets:
-            if str(asset.get('currency', '')).upper() == 'USDT':
-                return float(asset.get('availableBalance', 0) or 0)
-    except Exception as e:
-        print(f"⚠️ MEXC balance error: {e}", flush=True)
-    return 0.0
-
-
-def mexc_copy_open(token: str, direction: str, entry_price: float) -> float:
-    """
-    Открыть копию позиции на MEXC Futures.
-    Возвращает объём (vol) для последующего закрытия, или 0.0 при ошибке.
-    side: 1=OpenLong, 3=OpenShort
-    """
-    if not MEXC_COPY_ENABLED:
-        return 0.0
-    sym = mexc_symbol(token)
-    if not sym:
-        print(f"⚠️ MEXC copy: символ {token} не поддерживается — пропускаем", flush=True)
-        return 0.0
-    is_long = direction == 'BUY'
-    open_side = 1 if is_long else 3
-
-    balance = mexc_get_balance()
-    if balance <= 0:
-        balance = 596.0  # fallback: известный баланс друга
-    collateral = balance * COPY_SIZE_PCT
-    vol = round(collateral * COPY_LEVERAGE / entry_price, 4)
-    if vol <= 0:
-        return 0.0
-
-    try:
-        mexc_post_api('/api/v1/private/position/change_leverage', {
-            'symbol': sym,
-            'leverage': COPY_LEVERAGE,
-            'openType': 1,
-            'positionType': 1 if is_long else 2,
-        })
-    except Exception as e:
-        print(f"⚠️ MEXC set leverage error: {e}", flush=True)
-
-    try:
-        resp = mexc_post_api('/api/v1/private/order/submit', {
-            'symbol': sym,
-            'price': 0,
-            'vol': vol,
-            'side': open_side,
-            'type': 5,
-            'openType': 1,
-            'leverage': COPY_LEVERAGE,
-        })
-        if resp.get('success'):
-            sym_clean = token.replace('/USDT:USDT', '').replace('-USDT', '')
-            print(f"✅ MEXC copy {direction} opened: {sym} vol={vol}", flush=True)
-            send_telegram(
-                f"📋 <b>MEXC КОПИЯ ОТКРЫТА</b>\n"
-                f"{'🟢 ЛОНГ' if is_long else '🔴 ШОРТ'} {sym_clean}\n"
-                f"💰 Вход: ~${entry_price:,.4f}  vol={vol}\n"
-                f"📦 Залог: ~${collateral:,.2f} USDT (×{COPY_LEVERAGE})",
-                force=True
-            )
-            return vol
-        else:
-            err = resp.get('message', str(resp))
-            print(f"❌ MEXC copy open failed ({sym}): {err}", flush=True)
-            send_telegram(f"❌ MEXC копия: ошибка открытия {sym}:\n{err}", force=True)
-            return 0.0
-    except Exception as e:
-        print(f"❌ MEXC copy open exception ({sym}): {e}", flush=True)
-        return 0.0
-
-
-def mexc_copy_close(token: str, direction: str, vol: float) -> bool:
-    """
-    Закрыть копию позиции на MEXC Futures.
-    side: 4=CloseLong, 2=CloseShort
-    """
-    if not MEXC_COPY_ENABLED or vol <= 0:
-        return False
-    sym = mexc_symbol(token)
-    is_long = direction == 'BUY'
-    close_side = 4 if is_long else 2
-
-    try:
-        resp = mexc_post_api('/api/v1/private/order/submit', {
-            'symbol': sym,
-            'price': 0,
-            'vol': vol,
-            'side': close_side,
-            'type': 5,
-            'openType': 1,
-        })
-        if resp.get('success'):
-            sym_clean = token.replace('/USDT:USDT', '').replace('-USDT', '')
-            print(f"✅ MEXC copy position closed: {sym} vol={vol}", flush=True)
-            send_telegram(
-                f"📋 <b>MEXC КОПИЯ ЗАКРЫТА</b>\n"
-                f"{'🟢 ЛОНГ' if is_long else '🔴 ШОРТ'} {sym_clean}  vol={vol}",
-                force=True
-            )
-            return True
-        else:
-            err = resp.get('message', str(resp))
-            print(f"❌ MEXC copy close failed ({sym}): {err}", flush=True)
-            send_telegram(f"❌ MEXC копия: ошибка закрытия {sym}:\n{err}", force=True)
-            return False
-    except Exception as e:
-        print(f"❌ MEXC copy close exception ({sym}): {e}", flush=True)
-        return False
 
 
 def get_bingx_balance() -> float:
@@ -1103,9 +918,6 @@ def open_live_position(signal: dict, token: str, state: dict):
     if state['initial_balance'] == 0:
         state['initial_balance'] = balance
 
-    # MEXC COPY: открываем копию сразу после BingX
-    mexc_vol = mexc_copy_open(token, direction, actual_entry)
-
     new_pos = {
         'token': token,
         'direction': direction,
@@ -1122,7 +934,6 @@ def open_live_position(signal: dict, token: str, state: dict):
         'bingx_symbol': sym,
         'dca_entries': 1,
         'last_dca_at': None,
-        'mexc_vol': mexc_vol,
     }
     if 'open_positions' not in state:
         state['open_positions'] = []
@@ -1237,11 +1048,6 @@ def _dca_single_position(pos: dict, state: dict) -> bool:
         send_telegram(f"❌ Ошибка DCA {sym}: {e}", force=True)
         return False
 
-    # MEXC COPY DCA: открываем дополнительный вход на MEXC
-    mexc_dca_vol = mexc_copy_open(pos['token'], pos.get('direction', 'BUY'), actual_add_price)
-    if mexc_dca_vol > 0:
-        pos['mexc_vol'] = round(pos.get('mexc_vol', 0) + mexc_dca_vol, 4)
-
     old_qty = pos.get('qty', 0)
     old_collateral = pos.get('collateral', 0)
     old_entry = pos.get('entry_price', actual_add_price)
@@ -1306,11 +1112,6 @@ def _close_single_position(pos: dict, state: dict, reason: str = 'closed_by_exch
     is_long = pos.get('direction', 'BUY') == 'BUY'
     qty = pos.get('qty', 1) or 1
     collateral = pos.get('collateral', 1) or 1
-
-    # MEXC COPY: закрываем копию позиции
-    mexc_vol = pos.get('mexc_vol', 0)
-    if mexc_vol and mexc_vol > 0:
-        mexc_copy_close(pos['token'], pos.get('direction', 'BUY'), mexc_vol)
 
     # ── Метод 1: цена закрытия из истории ордеров × объём — самый прямой расчёт ──
     pnl_usd = 0.0
