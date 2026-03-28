@@ -476,7 +476,11 @@ router.post("/live-trading/reconcile", async (req, res) => {
         const merged: Record<string, unknown> = { ...pos };
         if (bxQty > 0)        { merged.qty = bxQty; updated++; }
         if (bxAvgPrice > 0)   { merged.entry_price = bxAvgPrice; }
-        if (bxCollateral > 0) { merged.collateral = bxCollateral; }
+        // Залог только растёт (суммируется с каждым DCA-входом).
+        // BingX initialMargin считается по mark-цене, поэтому может быть ниже
+        // реального накопленного залога — запрещаем reconcile уменьшать collateral.
+        const trackedCollateral = parseFloat(String(pos.collateral ?? "0")) || 0;
+        if (bxCollateral > trackedCollateral) { merged.collateral = bxCollateral; }
         merged.unrealized = bxUnrealized;
 
         return merged;
