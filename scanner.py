@@ -671,7 +671,8 @@ MEXC_SYMBOL_MAP = {
     'FIL_USDT':        'FILECOIN_USDT',
     'TRUMP_USDT':      'TRUMPOFFICIAL_USDT',
     '1000PEPE_USDT':   'PEPE_USDT',
-    # PUMP — на MEXC нет прямого PUMP_USDT; копирование пропускается автоматически
+    'ZK_USDT':         'ZKSYNC_USDT',
+    'PUMP_USDT':       'PUMPFUN_USDT',
 }
 
 # Символы которых нет на MEXC Futures — копирование молча пропускается
