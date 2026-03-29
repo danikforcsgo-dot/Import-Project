@@ -153,8 +153,9 @@ TRAIL_PCT = 0.01   # Трейлинг-стоп: 1% от лучшей цены (=
 TIMEFRAME = '4h'
 
 # === DCA ПАРАМЕТРЫ ===
-POSITION_SIZE_PCT   = 0.01  # каждый вход — 1% баланса
-MAX_DCA_ENTRIES     = 10    # максимум 10 входов (итого 100% баланса)
+POSITION_SIZE_PCT   = 0.01  # первый вход — 1% баланса
+DCA_SIZE_PCT        = 0.10  # каждый DCA-вход — 10% баланса (DCA сейчас отключён)
+MAX_DCA_ENTRIES     = 0     # 0 = DCA отключён
 DCA_MIN_INTERVAL    = 3600  # минимум 1 час между DCA-входами (анти-спам)
 DCA_LOSS_PCT        = 0.20  # DCA срабатывает когда убыток >= 20% от залога позиции
                             # (при 15х плечо = ~1% движение цены против позиции)
@@ -1026,7 +1027,7 @@ def _dca_single_position(pos: dict, state: dict) -> bool:
         return False
 
     entry_price = current_price or pos.get('entry_price', 1)
-    add_collateral = balance * POSITION_SIZE_PCT
+    add_collateral = balance * DCA_SIZE_PCT
     add_value = add_collateral * LIVE_LEVERAGE
     add_qty = round(add_value / entry_price, 4)
     if add_qty <= 0:
@@ -1489,7 +1490,7 @@ def _build_position_analysis() -> str | None:
             else:
                 next_dca_price = entry_price + target_loss_usdt / qty
 
-            add_collateral = (balance or collateral) * POSITION_SIZE_PCT
+            add_collateral = (balance or collateral) * DCA_SIZE_PCT
             add_qty = add_collateral * LIVE_LEVERAGE / (next_dca_price if next_dca_price > 0 else entry_price)
             new_qty = qty + add_qty
             new_avg = (entry_price * qty + next_dca_price * add_qty) / new_qty if new_qty > 0 else entry_price
