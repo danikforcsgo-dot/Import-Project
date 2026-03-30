@@ -147,13 +147,10 @@ EMA_BUFFER = 0.0    # без буфера — как в TV-скрипте
 RSI_PERIOD = 14
 RSI_MIN = 50
 ATR_PERIOD = 14
-SL_ATR_MULT = 5.5  # Stop Loss: 5.5 ATR от цены входа
-TP_ATR_MULT = 7.0  # Take Profit: 7.0 ATR от цены входа
-TRAIL_PCT = 0.01   # Трейлинг-стоп: 1% от лучшей цены (=15% депо буфер)
 TIMEFRAME = '1h'
 
 # === DCA ПАРАМЕТРЫ ===
-POSITION_SIZE_PCT   = 0.01  # первый вход — 1% баланса
+POSITION_SIZE_PCT   = 0.10  # первый вход — 10% баланса
 DCA_SIZE_PCT        = 0.10  # каждый DCA-вход — 10% баланса
 MAX_DCA_ENTRIES     = 10    # максимум 10 DCA-входов
 DCA_MIN_INTERVAL    = 3600  # минимум 1 час между DCA-входами (анти-спам)
@@ -414,8 +411,6 @@ def check_signal(symbol):
         crossover  = prev['close'] <= prev['ema_fast'] and last['close'] > last['ema_fast']
 
         if uptrend and crossover and strong_trend:
-            sl = last['close'] - SL_ATR_MULT * last['atr']
-            tp = last['close'] + TP_ATR_MULT * last['atr']
             return {
                 'signal': 'BUY',
                 'price': float(last['close']),
@@ -424,8 +419,8 @@ def check_signal(symbol):
                 'adx': float(last['adx']),
                 'atr': float(last['atr']),
                 'rsi': float(last['rsi']),
-                'sl': float(sl),
-                'tp': float(tp),
+                'sl': 0.0,
+                'tp': 0.0,
                 'candle_timestamp': int(last['timestamp'])
             }
 
@@ -434,8 +429,6 @@ def check_signal(symbol):
         short_cross    = prev['close'] >= prev['ema_fast'] and last['close'] < last['ema_fast']
 
         if downtrend and short_cross and strong_trend:
-            sl = last['close'] + SL_ATR_MULT * last['atr']
-            tp = last['close'] - TP_ATR_MULT * last['atr']
             return {
                 'signal': 'SHORT',
                 'price': float(last['close']),
@@ -444,8 +437,8 @@ def check_signal(symbol):
                 'adx': float(last['adx']),
                 'atr': float(last['atr']),
                 'rsi': float(last['rsi']),
-                'sl': float(sl),
-                'tp': float(tp),
+                'sl': 0.0,
+                'tp': 0.0,
                 'candle_timestamp': int(last['timestamp'])
             }
 
@@ -880,10 +873,9 @@ def open_live_position(signal: dict, token: str, state: dict):
     tp = signal['tp']
     sl = signal['sl']
 
-    # Контрарный режим: переворачиваем направление и меняем SL↔TP
+    # Контрарный режим: переворачиваем направление
     if CONTRARIAN_MODE:
         direction = 'SELL' if direction == 'BUY' else 'BUY'
-        sl, tp = tp, sl  # SL сигнала (далеко) → наш TP, TP сигнала (близко) → наш SL
         print(f"🔄 CONTRARIAN MODE: открываем {'SHORT' if direction == 'SELL' else 'LONG'} против сигнала", flush=True)
 
     is_long = direction == 'BUY'
