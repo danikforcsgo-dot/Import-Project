@@ -2240,7 +2240,17 @@ def main():
             live_state = load_live()
             bot_enabled = is_bot_enabled()  # читает из DB через API — не зависит от файла
 
-            # ── Отправляем сообщение со всеми сигналами ──────────────────────
+            def _score(item):
+                sig = item['signal']
+                adx = float(sig.get('adx', 0) or 0)
+                ema_fast = float(sig.get('ema_fast', 0) or 0)
+                ema_slow = float(sig.get('ema_slow', 1) or 1)
+                ema_spread = abs(ema_fast - ema_slow) / ema_slow * 100 if ema_slow > 0 else 0
+                return adx * 0.6 + ema_spread * 0.4
+
+            ranked = sorted(scan_pending_signals, key=_score, reverse=True)
+
+            # ── Отправляем сообщение с рейтингом (только для отображения) ────
             # Защита от дублей: не отправляем дважды за одну 1H свечу
             _ranking_already_sent = (_last_ranking_ts >= _cur_candle_ts)
             if _ranking_already_sent:
@@ -2249,22 +2259,23 @@ def main():
             if not _ranking_already_sent:
                 now_str = datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')
                 sig_lines = []
-                for idx, item in enumerate(scan_pending_signals):
+                for idx, item in enumerate(ranked):
                     sig     = item['signal']
                     sym     = item['sym']
                     is_long = sig['signal'] == 'BUY'
                     dir_e   = '🚀 ЛОНГ' if is_long else '🔴 ШОРТ'
                     adx_v   = float(sig.get('adx', 0) or 0)
+                    score   = _score(item)
                     mark    = '✅' if bot_enabled else '⏸️'
                     sig_lines.append(
                         f"{mark} <b>{idx+1}. {sym}</b>  {dir_e}\n"
-                        f"   ADX {adx_v:.1f}  ·  ${sig['price']:,.4f}"
+                        f"   ADX {adx_v:.1f}  ·  score {score:.1f}  ·  ${sig['price']:,.4f}"
                     )
 
                 if bot_enabled:
-                    header = f"📡 <b>Сигналы — открываем все ({len(scan_pending_signals)})</b>"
+                    header = f"🏆 <b>Рейтинг сигналов — открываем все ({len(ranked)})</b>"
                 else:
-                    header = f"⏸️ <b>Сигналы ({len(scan_pending_signals)}) — бот выключен</b>"
+                    header = f"⏸️ <b>Рейтинг сигналов ({len(ranked)}) — бот выключен</b>"
 
                 consolidated = (
                     f"{header}\n"
