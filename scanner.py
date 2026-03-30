@@ -147,7 +147,7 @@ EMA_BUFFER = 0.0    # без буфера — как в TV-скрипте
 RSI_PERIOD = 14
 RSI_MIN = 50
 ATR_PERIOD = 14
-TIMEFRAME = '1h'
+TIMEFRAME = '4h'
 
 # === DCA ПАРАМЕТРЫ ===
 POSITION_SIZE_PCT   = 0.10  # первый вход — 10% баланса
@@ -449,7 +449,7 @@ def check_signal(symbol):
 
 # === ХРАНЕНИЕ ОТПРАВЛЕННЫХ СИГНАЛОВ НА ДИСКЕ ===
 SENT_SIGNALS_FILE = "sent_signals.json"
-SIGNAL_COOLDOWN_SECONDS = 3600   # 1 час — одна и та же пара не сигналит чаще одного 1h кандла
+SIGNAL_COOLDOWN_SECONDS = 14400  # 4 часа — одна и та же пара не сигналит чаще одного 4h кандла
 
 def load_sent_signals():
     """Load sent signals from disk, drop entries older than cooldown period."""
@@ -2004,12 +2004,12 @@ def main():
         except Exception:
             pass
 
-        # Проверка: не сканировали ли мы уже эту 1H свечу?
+        # Проверка: не сканировали ли мы уже эту 4H свечу?
         # Храним timestamp последней просканированной свечи в БД.
         # Это защищает от дублей при перезапуске бота в середине свечного периода.
         _utc_now = datetime.now(timezone.utc)
-        _cur_1h_hour = _utc_now.hour
-        _cur_candle_ts = int(_utc_now.replace(hour=_cur_1h_hour, minute=0, second=0, microsecond=0).timestamp())
+        _cur_4h_hour = (_utc_now.hour // 4) * 4
+        _cur_candle_ts = int(_utc_now.replace(hour=_cur_4h_hour, minute=0, second=0, microsecond=0).timestamp())
         try:
             _st_r = requests.get(f"{API_BASE}/api/scanner/status", timeout=3)
             _st_data = _st_r.json() if _st_r.status_code == 200 else {}
@@ -2040,10 +2040,10 @@ def main():
             print(f"⚠️ P&L edit error: {_pnl_err}", flush=True)
 
         if _last_scanned_ts >= _cur_candle_ts:
-            _next_dt = _utc_now.replace(hour=_cur_1h_hour, minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            _next_dt = _utc_now.replace(hour=_cur_4h_hour, minute=0, second=0, microsecond=0) + timedelta(hours=4)
             _sleep_secs = max(30, (_next_dt - _utc_now).total_seconds())
             _msk_str = datetime.fromtimestamp(_next_dt.timestamp(), TZ_MOSCOW).strftime('%H:%M МСК %d.%m')
-            print(f"✅ Свеча {_cur_1h_hour:02d}:00 UTC уже просканирована — ждём следующей в {_msk_str}", flush=True)
+            print(f"✅ Свеча {_cur_4h_hour:02d}:00 UTC уже просканирована — ждём следующей в {_msk_str}", flush=True)
             time.sleep(_sleep_secs)
             continue
 
@@ -2054,7 +2054,7 @@ def main():
         _candle_age_sec = (_utc_now.timestamp() - _cur_candle_ts)
         if _candle_age_sec > _STALE_THRESHOLD_SEC:
             _msk_candle = datetime.fromtimestamp(_cur_candle_ts, TZ_MOSCOW).strftime('%H:%M МСК')
-            _next_dt = _utc_now.replace(hour=_cur_1h_hour, minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            _next_dt = _utc_now.replace(hour=_cur_4h_hour, minute=0, second=0, microsecond=0) + timedelta(hours=4)
             _msk_next = datetime.fromtimestamp(_next_dt.timestamp(), TZ_MOSCOW).strftime('%H:%M МСК %d.%m')
             print(
                 f"⏭️ Свеча {_msk_candle} устарела ({_candle_age_sec/60:.0f} мин назад) — пропускаем, "
@@ -2073,7 +2073,7 @@ def main():
         # Ждём 1 минуту чтобы биржа финализировала данные закрытой свечи
         _settle = 60
         _msk_open = datetime.now(TZ_MOSCOW).strftime('%H:%M МСК')
-        print(f"⏳ Новая 1H свеча ({_msk_open}) — ждём {_settle}с пока данные устоятся...", flush=True)
+        print(f"⏳ Новая 4H свеча ({_msk_open}) — ждём {_settle}с пока данные устоятся...", flush=True)
         time.sleep(_settle)
         print(f"🔍 Начинаем скан после паузы", flush=True)
 
@@ -2254,7 +2254,7 @@ def main():
             # Защита от дублей: не отправляем дважды за одну 1H свечу
             _ranking_already_sent = (_last_ranking_ts >= _cur_candle_ts)
             if _ranking_already_sent:
-                print(f"⏭️ Сигналы для свечи {_cur_1h_hour:02d}:00 UTC уже обработаны — пропускаем", flush=True)
+                print(f"⏭️ Сигналы для свечи {_cur_4h_hour:02d}:00 UTC уже обработаны — пропускаем", flush=True)
 
             if not _ranking_already_sent:
                 now_str = datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')
@@ -2365,12 +2365,16 @@ def main():
             "lastScannedCandleTs": _scanned_candle_ts,
         })
 
-        # Спим до следующего закрытия 1H свечи
+        # Спим до следующего закрытия 4H свечи (UTC: 00, 04, 08, 12, 16, 20)
         _now_utc = datetime.now(timezone.utc)
-        _next_dt = _now_utc.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        _cur_4h  = (_now_utc.hour // 4) * 4
+        _next_4h = _cur_4h + 4
+        _next_dt = _now_utc.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(hours=_next_4h)
+        if _next_dt <= _now_utc:
+            _next_dt += timedelta(hours=4)
         _sleep_secs = max(30, (_next_dt - _now_utc).total_seconds())
         _msk_str = datetime.fromtimestamp(_next_dt.timestamp(), TZ_MOSCOW).strftime('%H:%M МСК  %d.%m')
-        print(f"⏳ Следующий скан в {_msk_str} (через {_sleep_secs/60:.0f} мин — новая 1H свеча)", flush=True)
+        print(f"⏳ Следующий скан в {_msk_str} (через {_sleep_secs/60:.0f} мин — новая 4H свеча)", flush=True)
         time.sleep(_sleep_secs)
 
 if __name__ == '__main__':
