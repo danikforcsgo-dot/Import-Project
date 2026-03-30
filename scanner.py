@@ -161,6 +161,11 @@ DCA_LOSS_PCT        = 0.20  # DCA срабатывает когда убыток
                             # (при 15х плечо = ~1% движение цены против позиции)
 MAX_POSITIONS      = 2     # максимум одновременных позиций (открывается только если все остальные в плюсе)
 
+# === КОНТРАРНЫЙ РЕЖИМ ===
+# True  — открываем ПРОТИВ сигнала: сигнал LONG → открываем SHORT (и наоборот)
+# False — открываем ПО сигналу (стандартный режим)
+CONTRARIAN_MODE    = False
+
 # === ПОДКЛЮЧЕНИЕ К BINGX ===
 exchange = ccxt.bingx({
     'options': {
@@ -874,6 +879,13 @@ def open_live_position(signal: dict, token: str, state: dict):
     entry = signal['price']
     tp = signal['tp']
     sl = signal['sl']
+
+    # Контрарный режим: переворачиваем направление и меняем SL↔TP
+    if CONTRARIAN_MODE:
+        direction = 'SELL' if direction == 'BUY' else 'BUY'
+        sl, tp = tp, sl  # SL сигнала (далеко) → наш TP, TP сигнала (близко) → наш SL
+        print(f"🔄 CONTRARIAN MODE: открываем {'SHORT' if direction == 'SELL' else 'LONG'} против сигнала", flush=True)
+
     is_long = direction == 'BUY'
     position_side = 'LONG' if is_long else 'SHORT'
     order_side = 'BUY' if is_long else 'SELL'
@@ -924,8 +936,8 @@ def open_live_position(signal: dict, token: str, state: dict):
         'direction': direction,
         'entry_price': actual_entry,
         'qty': qty,
-        'tp': float(signal.get('tp', 0)),
-        'sl': float(signal.get('sl', 0)),
+        'tp': float(tp),
+        'sl': float(sl),
         'atr': float(signal.get('atr', 0)),
         'adx': float(signal.get('adx', 0)),
         'best_price': actual_entry,
@@ -944,8 +956,9 @@ def open_live_position(signal: dict, token: str, state: dict):
 
     sym_clean = token.replace('/USDT:USDT', '').replace('/USDC:USDC', '')
     dir_emoji = '🟢 ЛОНГ' if is_long else '🔴 ШОРТ'
+    contrarian_label = ' 🔄 КОНТР' if CONTRARIAN_MODE else ''
     msg = (
-        f"{dir_emoji} <b>РЕАЛЬНАЯ ПОЗИЦИЯ ОТКРЫТА 💸</b>\n"
+        f"{dir_emoji}{contrarian_label} <b>РЕАЛЬНАЯ ПОЗИЦИЯ ОТКРЫТА 💸</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📊 Токен:    <b>{sym_clean}</b>\n"
         f"💰 Вход:     <b>${actual_entry:,.4f}</b>\n"
