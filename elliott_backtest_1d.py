@@ -23,8 +23,8 @@ TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID   = os.environ.get('TELEGRAM_CHAT_ID', '')
 
 TIMEFRAME      = '1d'
-CANDLE_LIMIT   = 300   # 200 контекст + 7 неделя + запас для трекинга
-WEEK_BARS      = 7     # 7 дней = 7 дневных свечей
+CANDLE_LIMIT   = 350   # 200 контекст + 30 дней + запас для трекинга
+WEEK_BARS      = 30    # последние 30 дней = 30 дневных свечей
 MIN_CONTEXT    = 80    # минимум свечей для поиска волн (меньше чем 4H — 1D чище)
 ZZ_DEPTH       = 5
 MAX_W4_AGE     = 6
@@ -355,7 +355,7 @@ def format_report(all_signals):
     now_str = datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')
 
     report = (
-        f"〽️ <b>Elliott Backtest 1D — последние 7 дней (трекинг 30 дн.)</b>\n"
+        f"〽️ <b>Elliott Backtest 1D — последние 30 дней (трекинг 30 дн.)</b>\n"
         f"⏰ {now_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📊 Всего сигналов: <b>{total}</b>"
@@ -383,12 +383,12 @@ def format_report(all_signals):
 def main():
     now_str = datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')
     print(f"〽️ Elliott Backtest 1D запущен | {now_str}")
-    print(f"   Токенов: {len(TOKENS)} | Период: последние 7 дней (1D) | Трекинг: до 30 дней")
+    print(f"   Токенов: {len(TOKENS)} | Период: последние 30 дней (1D) | Трекинг: до 30 дней")
 
     send_telegram(
         f"〽️ <b>Elliott Backtest 1D запущен...</b>\n"
         f"⏰ {now_str}\n"
-        f"Сканирую {len(TOKENS)} токенов × 7 дней (1D) — займёт ~1-2 мин"
+        f"Сканирую {len(TOKENS)} токенов × 30 дней (1D) — займёт ~1-2 мин"
     )
 
     all_signals = []
