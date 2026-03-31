@@ -74,6 +74,8 @@ BINGX_API_KEY      = os.environ.get('BINGX_API_KEY', '')
 BINGX_SECRET_KEY   = os.environ.get('BINGX_SECRET_KEY', '')
 
 SENT_SIGNALS_FILE  = "sent_signals_elliott.json"
+ELLIOTT_HISTORY_FILE = "elliott_history.json"
+HISTORY_KEEP_HOURS = 48   # храним историю 48ч для ретроспектив
 
 
 # ===== TELEGRAM =====
@@ -174,6 +176,149 @@ def save_sent_signals(signals: dict):
             json.dump(signals, f)
     except Exception:
         pass
+
+
+# ===== ИСТОРИЯ СИГНАЛОВ ДЛЯ РЕТРОСПЕКТИВЫ =====
+def load_history() -> dict:
+    try:
+        if os.path.exists(ELLIOTT_HISTORY_FILE):
+            with open(ELLIOTT_HISTORY_FILE) as f:
+                data = json.load(f)
+            cutoff_ms = int(time.time() * 1000) - HISTORY_KEEP_HOURS * 3600 * 1000
+            return {k: v for k, v in data.items() if v.get('ts', 0) > cutoff_ms}
+    except Exception:
+        pass
+    return {}
+
+def save_history(history: dict):
+    try:
+        with open(ELLIOTT_HISTORY_FILE, 'w') as f:
+            json.dump(history, f)
+    except Exception:
+        pass
+
+
+def send_elliott_retrospective():
+    """Считает P&L по всем Elliott-сигналам за последние 48ч и шлёт в Telegram."""
+    history = load_history()
+    if not history:
+        print("〽️ ELLIOTT Retro: нет сигналов в истории", flush=True)
+        return
+
+    now_ms  = int(time.time() * 1000)
+    now_str = datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')
+    results = []
+
+    for token, rec in history.items():
+        try:
+            bars = get_exchange().fetch_ohlcv(token, timeframe='1m', limit=2)
+            cur_price = float(bars[-1][4]) if bars else None
+        except Exception:
+            cur_price = None
+        time.sleep(0.15)
+
+        entry   = rec['price']
+        is_long = rec['direction'] == 'LONG'
+        age_sec = (now_ms - rec['ts']) / 1000
+        age_str = (f"{int(age_sec//3600)}ч {int((age_sec%3600)//60)}м"
+                   if age_sec >= 3600 else f"{int(age_sec//60)}м")
+
+        if cur_price is None:
+            results.append({'sym': rec['sym'], 'is_long': is_long,
+                            'age': age_str, 'error': True,
+                            'tp_min': rec.get('tp_min'), 'tp_main': rec.get('tp_main'),
+                            'tp_ext': rec.get('tp_ext'), 'entry': entry})
+            continue
+
+        if is_long:
+            pnl_pct = (cur_price - entry) / entry * 100
+        else:
+            pnl_pct = (entry - cur_price) / entry * 100
+
+        results.append({
+            'sym':    rec['sym'],
+            'is_long': is_long,
+            'age':    age_str,
+            'entry':  entry,
+            'cur':    cur_price,
+            'pnl':    pnl_pct,
+            'tp_min': rec.get('tp_min'),
+            'tp_main': rec.get('tp_main'),
+            'tp_ext': rec.get('tp_ext'),
+            'error':  False,
+        })
+
+    if not results:
+        return
+
+    valid  = [r for r in results if not r['error']]
+    wins   = sum(1 for r in valid if r['pnl'] >= 0)
+    total  = len(valid)
+    avg_pnl = sum(r['pnl'] for r in valid) / total if total > 0 else 0
+
+    # Сортируем: лучший P&L сверху
+    valid_sorted = sorted(valid, key=lambda r: -r['pnl'])
+
+    lines = []
+    for r in valid_sorted:
+        d_emoji = '🟢' if r['is_long'] else '🔴'
+        pnl_e   = '✅' if r['pnl'] >= 0 else '❌'
+        sign    = '+' if r['pnl'] >= 0 else ''
+
+        # Показываем достигнутые цели
+        goals = []
+        if r['is_long']:
+            if r['cur'] >= r['tp_ext']:  goals.append('🎯×1.618')
+            elif r['cur'] >= r['tp_main']: goals.append('🎯×1.0')
+            elif r['cur'] >= r['tp_min']:  goals.append('🎯×0.618')
+        else:
+            if r['cur'] <= r['tp_ext']:  goals.append('🎯×1.618')
+            elif r['cur'] <= r['tp_main']: goals.append('🎯×1.0')
+            elif r['cur'] <= r['tp_min']:  goals.append('🎯×0.618')
+
+        goal_str = '  ' + ' '.join(goals) if goals else ''
+        lines.append(
+            f"{pnl_e} {d_emoji} <b>{r['sym']}</b>  {sign}{r['pnl']:.2f}%{goal_str}\n"
+            f"   ${r['entry']:,.4f} → ${r['cur']:,.4f}  ·  {r['age']}"
+        )
+
+    err_part = f"  ·  {len(results)-total} ошибок" if len(results) > total else ""
+    avg_e = '✅' if avg_pnl >= 0 else '❌'
+    avg_sign = '+' if avg_pnl >= 0 else ''
+
+    msg = (
+        f"〽️ <b>Elliott — ретроспектива</b>\n"
+        f"⏰ {now_str}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 Сигналов: {total}  ·  ✅ {wins}  ·  ❌ {total-wins}{err_part}\n"
+        f"{avg_e} Средний P&L: <b>{avg_sign}{avg_pnl:.2f}%</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        + "\n\n".join(lines)
+    )
+    send_telegram(msg, force=True)
+    print(f"〽️ ELLIOTT Retro: отправлено {total} сигналов, avg P&L {avg_sign}{avg_pnl:.2f}%", flush=True)
+
+
+def _retro_thread():
+    """Фоновый поток: ретроспектива каждые 4 часа (по UTC-границам 4H свечей)."""
+    # Первый раз — ждём следующей 4H границы
+    _utc = datetime.now(timezone.utc)
+    _cur = (_utc.hour // 4) * 4
+    _nxt = _utc.replace(hour=0, minute=0, second=0,
+                        microsecond=0) + timedelta(hours=_cur + 4)
+    if _nxt <= _utc:
+        _nxt += timedelta(hours=4)
+    _wait = max(30, (_nxt - _utc).total_seconds())
+    _msk  = datetime.fromtimestamp(_nxt.timestamp(), TZ_MOSCOW).strftime('%H:%M МСК')
+    print(f"〽️ ELLIOTT Retro: первая ретроспектива в {_msk}", flush=True)
+    time.sleep(_wait)
+
+    while True:
+        try:
+            send_elliott_retrospective()
+        except Exception as e:
+            print(f"〽️ ELLIOTT Retro ошибка: {e}", flush=True)
+        time.sleep(4 * 3600)
 
 
 # ===== ДАННЫЕ С БИРЖИ =====
@@ -566,6 +711,10 @@ def main():
     send_telegram("〽️ <b>Elliott Wave Scanner запущен</b>\n"
                   f"Таймфрейм: {TIMEFRAME.upper()}  ·  Токенов: {len(TOKENS)}", force=True)
 
+    # Фоновый поток ретроспективы
+    _t = threading.Thread(target=_retro_thread, daemon=True, name="elliott-retro")
+    _t.start()
+
     sent_signals: dict = load_sent_signals()
     _last_scanned_ts   = 0
 
@@ -629,6 +778,19 @@ def main():
                 pending.append({'signal': signal, 'token': token, 'sym': sym_clean})
                 print(f"〽️ ELLIOTT {signal['direction']} {token} @ ${signal['price']:,.6f} "
                       f"ADX={signal['adx']:.1f}", flush=True)
+
+                # Сохраняем в историю для ретроспективы
+                _hist = load_history()
+                _hist[token] = {
+                    'ts':        now_ms,
+                    'price':     signal['price'],
+                    'direction': signal['direction'],
+                    'sym':       sym_clean,
+                    'tp_min':    signal.get('tp_min'),
+                    'tp_main':   signal.get('tp_main'),
+                    'tp_ext':    signal.get('tp_ext'),
+                }
+                save_history(_hist)
 
         save_sent_signals(sent_signals)
         scan_elapsed = (datetime.now() - scan_start).total_seconds()
