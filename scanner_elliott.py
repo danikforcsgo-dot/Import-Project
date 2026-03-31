@@ -599,9 +599,9 @@ def main():
             time.sleep(_sleep_secs)
             continue
 
-        # Ждём 90 сек чтобы биржа закрыла свечу
-        print(f"⏳ ELLIOTT: новая {TIMEFRAME.upper()} свеча — ждём 90с...", flush=True)
-        time.sleep(90)
+        # Ждём 10 мин: сначала отрабатывает основной сканер, потом Elliott
+        print(f"⏳ ELLIOTT: новая {TIMEFRAME.upper()} свеча — ждём 10 мин (после основного сканера)...", flush=True)
+        time.sleep(600)
         _last_scanned_ts = _cur_candle_ts
 
         # Очищаем устаревшие кулдауны
