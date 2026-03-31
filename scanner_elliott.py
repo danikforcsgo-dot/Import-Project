@@ -82,7 +82,6 @@ TOKENS = [
     'ONDO/USDT:USDT',
     'CFX/USDT:USDT',
     'ZRO/USDT:USDT',
-    'STRK/USDT:USDT',
     'TIA/USDT:USDT',
     'ALGO/USDT:USDT',
     'ICP/USDT:USDT',
