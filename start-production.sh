@@ -32,22 +32,16 @@ if command -v python3 >/dev/null 2>&1; then
   SCANNER_PID=$!
   echo "  scanner.py PID=$SCANNER_PID"
 
-  echo "▶ Запуск scanner_elliott.py в фоне..."
-  python3 scanner_elliott.py >> /tmp/scanner_elliott.log 2>&1 &
-  SCANNER_ELLIOTT_PID=$!
-  echo "  scanner_elliott.py PID=$SCANNER_ELLIOTT_PID"
 else
-  echo "⚠️  Python3 не найден — сканеры не будут запущены"
+  echo "⚠️  Python3 не найден — scanner.py не будет запущен"
   SCANNER_PID=""
-  SCANNER_ELLIOTT_PID=""
 fi
 
 # Ждём завершения API (основной процесс)
-# При выходе — останавливаем сканеры
+# При выходе — останавливаем сканер
 cleanup() {
   echo "⏹ Остановка..."
-  [ -n "$SCANNER_PID" ]         && kill $SCANNER_PID 2>/dev/null
-  [ -n "$SCANNER_ELLIOTT_PID" ] && kill $SCANNER_ELLIOTT_PID 2>/dev/null
+  [ -n "$SCANNER_PID" ] && kill $SCANNER_PID 2>/dev/null
   wait $API_PID 2>/dev/null
 }
 trap cleanup EXIT INT TERM
