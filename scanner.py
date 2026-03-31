@@ -2180,54 +2180,11 @@ def main():
         # ── Логируем время скана ────────────────────────────────────────────────
         scan_elapsed = (datetime.now() - scan_start).total_seconds()
         _s1_msg = (
-            f"🔍 <b>Скан 1/2 завершён</b> за {scan_elapsed:.0f}с\n"
+            f"🔍 <b>Скан завершён</b> за {scan_elapsed:.0f}с\n"
             f"   {len(TOKENS)} токенов  ·  {scan_signals_this_round} сигналов"
         )
-        print(f"⏱️ Скан 1/2 завершён за {scan_elapsed:.1f}с | {len(TOKENS)} токенов | {scan_signals_this_round} сигналов", flush=True)
+        print(f"⏱️ Скан завершён за {scan_elapsed:.1f}с | {len(TOKENS)} токенов | {scan_signals_this_round} сигналов", flush=True)
         send_telegram(_s1_msg, force=True)
-
-        # ── ВТОРОЙ СКАН: повторно проверяем токены, которых не было в скане 1 ──
-        # Цель: поймать токены с таймаутами в скане 1 и собрать больше сигналов
-        # Токены из скана 1 пропускаем (уже в sent_signals + в scan_pending_signals)
-        if not paused_mid_scan:
-            _scan1_tokens = {item['token'] for item in scan_pending_signals}
-            _tokens_for_scan2 = [t for t in TOKENS if t not in _scan1_tokens]
-            if _tokens_for_scan2:
-                scan2_start = datetime.now()
-                scan2_found = 0
-                _pool2_count = 0
-                with ThreadPoolExecutor(max_workers=SCAN_WORKERS) as _pool2:
-                    future_map2 = {_pool2.submit(_do_scan_token, tok): tok for tok in _tokens_for_scan2}
-                    for fut2 in as_completed(future_map2):
-                        token2, signal2 = fut2.result()
-                        _pool2_count += 1
-                        if signal2:
-                            # Пропускаем если уже была сделка сегодня
-                            if token2 in _traded_today:
-                                continue
-                            sym2 = token2.replace('/USDT:USDT','').replace('/USDC:USDC','')
-                            save_signal_to_dashboard(signal2, token2)
-                            signals_found += 1
-                            scan_signals_this_round += 1
-                            scan2_found += 1
-                            sent_signals[token2] = int(time.time() * 1000)
-                            print(f"✅ [скан2] {signal2['signal']} Signal: {token2} @ ${signal2['price']:,.6f}", flush=True)
-                            scan_pending_signals.append({'signal': signal2, 'token': token2, 'sym': sym2})
-                scan2_elapsed = (datetime.now() - scan2_start).total_seconds()
-                _s2_msg = (
-                    f"🔍 <b>Скан 2/2 завершён</b> за {scan2_elapsed:.0f}с\n"
-                    f"   {len(_tokens_for_scan2)} токенов  ·  +{scan2_found} новых сигналов\n"
-                    f"   Итого: {len(scan_pending_signals)} сигналов — ранжируем"
-                )
-                print(f"⏱️ Скан 2/2 завершён за {scan2_elapsed:.1f}с | {len(_tokens_for_scan2)} токенов | {scan2_found} новых сигналов", flush=True)
-                send_telegram(_s2_msg, force=True)
-            else:
-                _s2_skip = (
-                    f"⏭️ <b>Скан 2/2 пропущен</b> — все {len(TOKENS)} токенов уже дали сигналы\n"
-                    f"   Ранжируем {len(scan_pending_signals)} сигналов"
-                )
-                print(f"⏭️ Скан 2/2 пропущен — все {len(TOKENS)} токенов уже дали сигналы в скане 1", flush=True)
-                send_telegram(_s2_skip, force=True)
 
         # ── Сохраняем кулдауны и ранжируем сигналы ────────────────────────────
         if paused_mid_scan:
