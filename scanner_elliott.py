@@ -641,37 +641,86 @@ def main():
         send_telegram(status_msg, force=True)
 
         if pending:
-            live_state  = load_live()
-            bot_enabled = is_bot_enabled()
+            now_str = datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')
 
-            # Отправляем сводное сообщение с найденными сигналами
+            # Сводное сообщение
             lines = []
             for i, item in enumerate(pending):
-                sig  = item['signal']
-                sym  = item['sym']
-                d    = '🟢 ЛОНГ' if sig['signal'] == 'BUY' else '🔴 ШОРТ'
-                mark = '✅' if bot_enabled else '⏸️'
+                sig = item['signal']
+                sym = item['sym']
+                d   = '🟢 ЛОНГ' if sig['signal'] == 'BUY' else '🔴 ШОРТ'
                 lines.append(
-                    f"{mark} <b>{i+1}. {sym}</b>  {d}\n"
+                    f"〽️ <b>{i+1}. {sym}</b>  {d}\n"
                     f"   ADX {sig['adx']:.1f}  ·  W4 откат {sig['w4_ret']*100:.1f}%  "
                     f"·  ${sig['price']:,.4f}"
                 )
+            send_telegram(
+                f"〽️ <b>Волны Эллиота — {len(pending)} сигнал(а)</b>\n"
+                f"⏰ {now_str}\n━━━━━━━━━━━━━━━━━━━━\n"
+                + "\n\n".join(lines), force=True
+            )
 
-            hdr = (f"〽️ <b>Волны Эллиота — открываем все ({len(pending)})</b>"
-                   if bot_enabled else
-                   f"〽️ <b>Волны Эллиота ({len(pending)}) — бот выключен</b>")
-            now_str = datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')
-            send_telegram(f"{hdr}\n⏰ {now_str}\n━━━━━━━━━━━━━━━━━━━━\n"
-                          + "\n\n".join(lines), force=True)
+            # Детальное сообщение по каждому сигналу
+            for item in pending:
+                sig = item['signal']
+                sym = item['sym']
+                is_long = sig['signal'] == 'BUY'
+                dir_emoji = '🟢 ЛОНГ' if is_long else '🔴 ШОРТ'
 
-            if bot_enabled:
-                for item in pending:
-                    if not is_bot_enabled():
-                        break
-                    open_live_position(item['signal'], item['token'], live_state)
-            else:
-                print(f"⏸️ ELLIOTT: бот выключен — пропускаем {len(pending)} сигналов",
-                      flush=True)
+                if is_long:
+                    waves_text = (
+                        f"   W1: ${sig['L0']:,.4f} → ${sig['H1']:,.4f}"
+                        f"  (+{(sig['H1']-sig['L0'])/sig['L0']*100:.1f}%)\n"
+                        f"   W2: откат {sig['w2_ret']*100:.1f}% → ${sig['L2']:,.4f}\n"
+                        f"   W3: ${sig['L2']:,.4f} → ${sig['H3']:,.4f}"
+                        f"  (+{(sig['H3']-sig['L2'])/sig['L2']*100:.1f}%)\n"
+                        f"   W4: откат {sig['w4_ret']*100:.1f}% → ${sig['L4']:,.4f}\n"
+                        f"   W5: ожидаем ↑ (вход ~${sig['price']:,.4f})"
+                    )
+                    tp_text = (
+                        f"   61.8%: ${sig['tp_min']:,.4f}"
+                        f"  (+{(sig['tp_min']-sig['price'])/sig['price']*100:.1f}%)\n"
+                        f"  100%:  ${sig['tp_main']:,.4f}"
+                        f"  (+{(sig['tp_main']-sig['price'])/sig['price']*100:.1f}%)\n"
+                        f"  161.8%: ${sig['tp_ext']:,.4f}"
+                        f"  (+{(sig['tp_ext']-sig['price'])/sig['price']*100:.1f}%)"
+                    )
+                else:
+                    waves_text = (
+                        f"   W1: ${sig['H0']:,.4f} → ${sig['L1']:,.4f}"
+                        f"  (-{(sig['H0']-sig['L1'])/sig['H0']*100:.1f}%)\n"
+                        f"   W2: откат {sig['w2_ret']*100:.1f}% → ${sig['H2']:,.4f}\n"
+                        f"   W3: ${sig['H2']:,.4f} → ${sig['L3']:,.4f}"
+                        f"  (-{(sig['H2']-sig['L3'])/sig['H2']*100:.1f}%)\n"
+                        f"   W4: откат {sig['w4_ret']*100:.1f}% → ${sig['H4']:,.4f}\n"
+                        f"   W5: ожидаем ↓ (вход ~${sig['price']:,.4f})"
+                    )
+                    tp_text = (
+                        f"   61.8%: ${sig['tp_min']:,.4f}"
+                        f"  (-{(sig['price']-sig['tp_min'])/sig['price']*100:.1f}%)\n"
+                        f"  100%:  ${sig['tp_main']:,.4f}"
+                        f"  (-{(sig['price']-sig['tp_main'])/sig['price']*100:.1f}%)\n"
+                        f"  161.8%: ${sig['tp_ext']:,.4f}"
+                        f"  (-{(sig['price']-sig['tp_ext'])/sig['price']*100:.1f}%)"
+                    )
+
+                detail_msg = (
+                    f"〽️ {dir_emoji} <b>{sym} — Волна 5 формируется</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📊 Таймфрейм: {TIMEFRAME.upper()}  ·  ADX {sig['adx']:.1f}\n"
+                    f"💰 Текущая цена: <b>${sig['price']:,.4f}</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🌊 <b>Волновая структура:</b>\n"
+                    f"{waves_text}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🎯 <b>Цели Волны 5 (Фибоначчи):</b>\n"
+                    f"{tp_text}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"⚠️ Решение о входе — за вами\n"
+                    f"⏰ {now_str}"
+                )
+                send_telegram(detail_msg, force=True)
+                print(f"〽️ ELLIOTT сигнал отправлен: {sym} {sig['direction']}", flush=True)
 
         # Спим до следующей 4H свечи
         _now_utc  = datetime.now(timezone.utc)
