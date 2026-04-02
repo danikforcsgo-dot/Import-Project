@@ -149,6 +149,7 @@ ATR_PERIOD = 14
 TIMEFRAME = '4h'
 
 # === DCA ПАРАМЕТРЫ ===
+DCA_ENABLED         = False  # True — DCA включён, False — на паузе
 POSITION_SIZE_PCT   = 0.10  # первый вход — 10% баланса
 DCA_SIZE_PCT        = 0.10  # каждый DCA-вход — 10% баланса
 MAX_DCA_ENTRIES     = 10    # максимум 10 DCA-входов
@@ -1091,6 +1092,8 @@ def dca_live_position(state: dict):
     """DCA для убыточных позиций из open_positions.
     За один цикл монитора — не более 1 DCA (защита от одновременного слива баланса).
     """
+    if not DCA_ENABLED:
+        return
     positions = state.get('open_positions', [])
     if not positions:
         return
