@@ -116,7 +116,6 @@ TOKENS = [
     'BEAT/USDT:USDT',
     'XPL/USDT:USDT',
     'C/USDT:USDT',
-    'BANANAS31/USDT:USDT',
     # --- Группа А (добавлены) ---
     'TAO/USDT:USDT',
     'ENJ/USDT:USDT',
