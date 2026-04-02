@@ -53,7 +53,6 @@ TOKENS = [
     'ARB/USDT:USDT',
     'ZEC/USDT:USDT',
     'XMR/USDT:USDT',
-    'PAXG/USDT:USDT',
     'TRX/USDT:USDT',
     'FIL/USDT:USDT',
     'ATOM/USDT:USDT',
