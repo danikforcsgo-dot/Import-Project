@@ -9,5 +9,6 @@
   "balance": 0,
   "enabled": true,
   "open_position": null,
-  "initial_balance": 0
+  "initial_balance": 0,
+  "open_positions": []
 }
