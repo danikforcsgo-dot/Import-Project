@@ -2047,9 +2047,9 @@ def main():
             continue
 
         # Проверяем что свеча не "протухла" — бот мог быть выключен и пропустить закрытие свечи.
-        # Если с момента закрытия прошло больше 10 минут — пропускаем, не сканируем.
-        # (10 мин > settle(1 мин) + scan(2 мин) + буфер: нормальный скан укладывается в ~3-4 мин)
-        _STALE_THRESHOLD_SEC = 10 * 60  # 10 минут
+        # Если с момента открытия прошло больше 60 минут — пропускаем.
+        # 60 мин даёт запас при перезапуске/деплое; двойной скан исключён через lastScannedCandleTs.
+        _STALE_THRESHOLD_SEC = 60 * 60  # 60 минут
         _candle_age_sec = (_utc_now.timestamp() - _cur_candle_ts)
         if _candle_age_sec > _STALE_THRESHOLD_SEC:
             _msk_candle = datetime.fromtimestamp(_cur_candle_ts, TZ_MOSCOW).strftime('%H:%M МСК')
