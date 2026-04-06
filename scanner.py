@@ -904,34 +904,12 @@ def open_live_position(signal: dict, token: str, state: dict):
         print(f"⚠️ Qty calculated as {qty} — skipping", flush=True)
         return
 
-    # Вычисляем абсолютные цены TP / SL
-    import json as _json
-    tp_price = round(entry * (1 + tp / 100), 8) if (is_long and tp > 0) \
-          else round(entry * (1 - tp / 100), 8) if (not is_long and tp > 0) else None
-    sl_price = round(entry * (1 - sl / 100), 8) if (is_long and sl > 0) \
-          else round(entry * (1 + sl / 100), 8) if (not is_long and sl > 0) else None
-
-    order_body = {
-        'symbol': sym, 'side': order_side, 'positionSide': position_side,
-        'type': 'MARKET', 'quantity': qty,
-    }
-    if tp_price:
-        order_body['takeProfit'] = _json.dumps({
-            'type': 'TAKE_PROFIT_MARKET',
-            'stopPrice': tp_price,
-            'price': tp_price,
-            'workingType': 'MARK_PRICE',
-        })
-    if sl_price:
-        order_body['stopLoss'] = _json.dumps({
-            'type': 'STOP_MARKET',
-            'stopPrice': sl_price,
-            'workingType': 'MARK_PRICE',
-        })
-
     # Открываем рыночный ордер
     try:
-        order_resp = bingx_post_api('/openApi/swap/v2/trade/order', order_body)
+        order_resp = bingx_post_api('/openApi/swap/v2/trade/order', {
+            'symbol': sym, 'side': order_side, 'positionSide': position_side,
+            'type': 'MARKET', 'quantity': qty,
+        })
         if order_resp.get('code') != 0:
             msg = order_resp.get('msg', 'Unknown error')
             print(f"❌ BingX order failed: {msg}", flush=True)
@@ -951,6 +929,36 @@ def open_live_position(signal: dict, token: str, state: dict):
                  else round(actual_entry * (1 - tp / 100), 8) if (not is_long and tp > 0) else None
     actual_sl_price = round(actual_entry * (1 - sl / 100), 8) if (is_long and sl > 0) \
                  else round(actual_entry * (1 + sl / 100), 8) if (not is_long and sl > 0) else None
+
+    # Выставляем TP / SL как отдельные ордера на бирже
+    close_side = 'SELL' if is_long else 'BUY'
+    if actual_tp_price:
+        try:
+            tp_resp = bingx_post_api('/openApi/swap/v2/trade/order', {
+                'symbol': sym, 'side': close_side, 'positionSide': position_side,
+                'type': 'TAKE_PROFIT_MARKET', 'quantity': qty,
+                'stopPrice': actual_tp_price, 'workingType': 'MARK_PRICE',
+            })
+            if tp_resp.get('code') == 0:
+                print(f"🎯 TP order placed: {sym} @ ${actual_tp_price:,.4f}", flush=True)
+            else:
+                print(f"⚠️ TP order failed ({sym}): {tp_resp.get('msg')}", flush=True)
+        except Exception as _e:
+            print(f"⚠️ TP order exception ({sym}): {_e}", flush=True)
+
+    if actual_sl_price:
+        try:
+            sl_resp = bingx_post_api('/openApi/swap/v2/trade/order', {
+                'symbol': sym, 'side': close_side, 'positionSide': position_side,
+                'type': 'STOP_MARKET', 'quantity': qty,
+                'stopPrice': actual_sl_price, 'workingType': 'MARK_PRICE',
+            })
+            if sl_resp.get('code') == 0:
+                print(f"🛑 SL order placed: {sym} @ ${actual_sl_price:,.4f}", flush=True)
+            else:
+                print(f"⚠️ SL order failed ({sym}): {sl_resp.get('msg')}", flush=True)
+        except Exception as _e:
+            print(f"⚠️ SL order exception ({sym}): {_e}", flush=True)
 
     new_pos = {
         'token': token,
