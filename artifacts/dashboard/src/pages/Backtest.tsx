@@ -90,19 +90,15 @@ function computeTrade(
   for (let i = 0; i < candles.length; i++) {
     const c = candles[i];
 
-    // 1. TP — check first (most optimistic)
+    // 1. TP — проверяем по хаю/лоу свечи
     if (tpPrice !== null) {
       const hit = actualDir === "LONG" ? c.h >= tpPrice : c.l <= tpPrice;
       if (hit) { exitPrice = tpPrice; exitReason = "TP"; exitCandleIdx = i; break; }
     }
 
-    // 2. Update bestPrice with this candle's favorable extreme (after TP check)
-    if (trailPct > 0) {
-      if (actualDir === "LONG")  bestPrice = Math.max(bestPrice, c.h);
-      else                       bestPrice = Math.min(bestPrice, c.l);
-    }
-
-    // 3. Trailing SL — trails behind bestPrice
+    // 2. Trailing SL — проверяем по уровню ПРЕДЫДУЩИХ свечей (до обновления bestPrice)
+    //    Это консервативный вариант: мы не знаем, хай или лой был раньше внутри свечи.
+    //    Безопаснее считать что лой (неблагоприятное движение) произошёл ДО нового хая.
     if (trailPct > 0) {
       const tslPrice = actualDir === "LONG"
         ? bestPrice * (1 - trailPct / 100)
@@ -111,19 +107,25 @@ function computeTrade(
       if (hit) { exitPrice = tslPrice; exitReason = "TSL"; exitCandleIdx = i; break; }
     }
 
-    // 4. Fixed SL — защита если трейлинг выключен или SL задан отдельно
+    // 3. Fixed SL
     if (slPrice !== null) {
       const hit = actualDir === "LONG" ? c.l <= slPrice : c.h >= slPrice;
       if (hit) { exitPrice = slPrice; exitReason = "SL"; exitCandleIdx = i; break; }
     }
 
-    // 5. Ликвидация
+    // 4. Ликвидация
     const liqHit = actualDir === "LONG"
       ? c.l <= liqPriceLong
       : c.h >= liqPriceShort;
     if (liqHit) {
       exitPrice = actualDir === "LONG" ? liqPriceLong : liqPriceShort;
       exitReason = "LIQ"; exitCandleIdx = i; break;
+    }
+
+    // 5. Обновляем bestPrice ПОСЛЕ проверок — влияет на TSL следующей свечи
+    if (trailPct > 0) {
+      if (actualDir === "LONG")  bestPrice = Math.max(bestPrice, c.h);
+      else                       bestPrice = Math.min(bestPrice, c.l);
     }
   }
 
