@@ -1,12 +1,14 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { Target, X, TrendingDown, Layers, RefreshCw } from "lucide-react";
+import { Target, X, RefreshCw, Layers } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { formatMoney, formatPercent, cn } from "@/lib/utils";
+import { formatMoney, cn } from "@/lib/utils";
 import type { TradingState } from "@workspace/api-client-react";
 import { useState, useEffect } from "react";
+
+const TRAIL_PCT = 0.5; // должно совпадать со scanner.py TRAIL_PCT
 
 interface PositionPnlEntry {
   symbol: string;
@@ -42,6 +44,9 @@ interface LocalOpenPos {
   qty?: number;
   tp?: number;
   sl?: number;
+  tp_price?: number;
+  sl_price?: number;
+  best_price?: number;
   atr?: number;
   adx?: number;
   collateral?: number;
@@ -49,6 +54,103 @@ interface LocalOpenPos {
   opened_at?: string;
   dca_entries?: number;
   last_dca_at?: string;
+}
+
+// Визуальный мини-индикатор уровней цены
+function PriceLevelBar({ pos, currentPrice }: { pos: LocalOpenPos; currentPrice: number }) {
+  const isLong = pos.direction === "BUY";
+  const entry = pos.entry_price ?? 0;
+  if (!entry || !currentPrice) return null;
+
+  const tpPrice  = pos.tp_price ?? (pos.tp && pos.tp > 0
+    ? entry * (isLong ? 1 + pos.tp / 100 : 1 - pos.tp / 100) : null);
+  const bestPr   = pos.best_price ?? entry;
+  const tslPrice = TRAIL_PCT > 0
+    ? (isLong ? bestPr * (1 - TRAIL_PCT / 100) : bestPr * (1 + TRAIL_PCT / 100))
+    : null;
+
+  // Диапазон для нормализации
+  const prices = [entry, currentPrice, tpPrice, tslPrice].filter(Boolean) as number[];
+  const rawMin = Math.min(...prices);
+  const rawMax = Math.max(...prices);
+  const pad = (rawMax - rawMin) * 0.3 || entry * 0.002;
+  const lo = rawMin - pad;
+  const hi = rawMax + pad;
+  const norm = (p: number) => Math.max(0, Math.min(100, ((p - lo) / (hi - lo)) * 100));
+
+  // Для LONG — TP сверху, TSL снизу; ось идёт снизу вверх
+  const levels = [
+    tpPrice  ? { price: tpPrice,     pct: norm(tpPrice),     label: "TP",  color: "#22c55e" } : null,
+    { price: entry,      pct: norm(entry),      label: "ENTRY", color: "#94a3b8" },
+    tslPrice ? { price: tslPrice,    pct: norm(tslPrice),    label: "TSL", color: "#f97316" } : null,
+  ].filter(Boolean) as { price: number; pct: number; label: string; color: string }[];
+
+  const curPct = norm(currentPrice);
+  const deltaEntry = ((currentPrice - entry) / entry) * 100 * (isLong ? 1 : -1);
+
+  return (
+    <div className="mt-2 pt-2 border-t border-border/40">
+      <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mb-1.5">Уровни позиции</div>
+      <div className="flex gap-3 items-stretch">
+        {/* Вертикальная шкала */}
+        <div className="relative w-5 flex-shrink-0" style={{ height: 80 }}>
+          {/* трек */}
+          <div className="absolute left-2 top-0 bottom-0 w-px bg-border/50" />
+          {/* уровни */}
+          {levels.map(lv => (
+            <div
+              key={lv.label}
+              className="absolute left-0 flex items-center"
+              style={{ bottom: `${lv.pct}%`, transform: "translateY(50%)" }}
+            >
+              <div className="w-4 h-px" style={{ backgroundColor: lv.color }} />
+            </div>
+          ))}
+          {/* текущая цена — точка */}
+          <div
+            className="absolute left-0.5 w-3 h-3 rounded-full border-2 border-background"
+            style={{
+              bottom: `${curPct}%`,
+              transform: "translateY(50%)",
+              backgroundColor: deltaEntry >= 0 ? "#22c55e" : "#ef4444",
+            }}
+          />
+        </div>
+
+        {/* Метки справа */}
+        <div className="relative flex-1 text-right" style={{ height: 80 }}>
+          {levels.map(lv => (
+            <div
+              key={lv.label}
+              className="absolute right-0 flex items-center gap-1.5 justify-end"
+              style={{ bottom: `${lv.pct}%`, transform: "translateY(50%)" }}
+            >
+              <span className="text-[10px] font-mono font-bold" style={{ color: lv.color }}>{lv.label}</span>
+              <span className="text-[10px] font-mono text-muted-foreground">${lv.price.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+            </div>
+          ))}
+          {/* текущая цена */}
+          <div
+            className="absolute right-0 flex items-center gap-1.5 justify-end"
+            style={{ bottom: `${curPct}%`, transform: "translateY(50%)" }}
+          >
+            <span className="text-[10px] font-mono font-bold" style={{ color: deltaEntry >= 0 ? "#22c55e" : "#ef4444" }}>
+              NOW {deltaEntry >= 0 ? "+" : ""}{deltaEntry.toFixed(2)}%
+            </span>
+            <span className="text-[10px] font-mono text-foreground">${currentPrice.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* TSL best_price строка */}
+      {tslPrice && (
+        <div className="flex justify-between mt-1.5">
+          <span className="text-[10px] font-mono text-muted-foreground">TSL лучшая цена</span>
+          <span className="text-[10px] font-mono text-orange-400">${bestPr.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Strategy constants — mirrored from scanner.py
@@ -291,6 +393,9 @@ export function BotPanel({ title, data, exchangeBalance, positionPnl, onToggle, 
                           )}
                         </div>
                       )}
+
+                      {/* Price level bar: entry / current / TP / TSL */}
+                      <PriceLevelBar pos={pos} currentPrice={currentPrice} />
 
                       {/* Close button for every position */}
                       {onClosePosition && (
