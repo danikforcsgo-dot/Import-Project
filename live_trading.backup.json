@@ -6,7 +6,7 @@
     "total_pnl": 0
   },
   "trades": [],
-  "balance": 580.9285,
+  "balance": 645.7325,
   "enabled": true,
   "open_position": {
     "token": "REZ/USDT:USDT",
@@ -45,25 +45,6 @@
       "position_value": 968.59875,
       "opened_at": "2026-04-06T15:11:31.025012+03:00",
       "bingx_symbol": "REZ-USDT",
-      "dca_entries": 1,
-      "last_dca_at": null
-    },
-    {
-      "token": "PYTH/USDT:USDT",
-      "direction": "BUY",
-      "entry_price": 0.04053,
-      "qty": 21489.3403,
-      "tp": 0.5,
-      "sl": 0.5,
-      "tp_price": 0.04073265,
-      "sl_price": 0.04032735,
-      "atr": 0.0007614833622911275,
-      "adx": 25.381485867005594,
-      "best_price": 0.04053,
-      "collateral": 58.09285,
-      "position_value": 871.39275,
-      "opened_at": "2026-04-06T15:11:33.339893+03:00",
-      "bingx_symbol": "PYTH-USDT",
       "dca_entries": 1,
       "last_dca_at": null
     }
