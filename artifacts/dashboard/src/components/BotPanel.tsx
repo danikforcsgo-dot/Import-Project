@@ -47,6 +47,7 @@ interface LocalOpenPos {
   tp_price?: number;
   sl_price?: number;
   best_price?: number;
+  trail?: number;
   atr?: number;
   adx?: number;
   collateral?: number;
@@ -64,9 +65,11 @@ function PriceLevelBar({ pos, currentPrice }: { pos: LocalOpenPos; currentPrice:
 
   const tpPrice  = pos.tp_price ?? (pos.tp && pos.tp > 0
     ? entry * (isLong ? 1 + pos.tp / 100 : 1 - pos.tp / 100) : null);
-  const bestPr   = pos.best_price ?? entry;
-  const tslPrice = TRAIL_PCT > 0
-    ? (isLong ? bestPr * (1 - TRAIL_PCT / 100) : bestPr * (1 + TRAIL_PCT / 100))
+  const trailPct = pos.trail ?? TRAIL_PCT;
+  // TSL следит за пиком цены на бирже; приближаем от текущей цены
+  const peakPrice = isLong ? Math.max(currentPrice, entry) : Math.min(currentPrice, entry);
+  const tslPrice  = trailPct > 0
+    ? (isLong ? peakPrice * (1 - trailPct / 100) : peakPrice * (1 + trailPct / 100))
     : null;
 
   // Диапазон для нормализации
@@ -142,11 +145,11 @@ function PriceLevelBar({ pos, currentPrice }: { pos: LocalOpenPos; currentPrice:
         </div>
       </div>
 
-      {/* TSL best_price строка */}
+      {/* TSL — биржевой ордер */}
       {tslPrice && (
         <div className="flex justify-between mt-1.5">
-          <span className="text-[10px] font-mono text-muted-foreground">TSL лучшая цена</span>
-          <span className="text-[10px] font-mono text-orange-400">${bestPr.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+          <span className="text-[10px] font-mono text-muted-foreground">TSL ордер на бирже · откат {trailPct}%</span>
+          <span className="text-[10px] font-mono text-orange-400">≈ ${tslPrice.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
         </div>
       )}
     </div>

@@ -959,6 +959,22 @@ def open_live_position(signal: dict, token: str, state: dict):
         except Exception as _e:
             print(f"⚠️ SL order exception ({sym}): {_e}", flush=True)
 
+    # Выставляем Трейлинг-SL как биржевой ордер (виден на графике BingX)
+    if TRAIL_PCT > 0:
+        try:
+            tsl_resp = bingx_post_api('/openApi/swap/v2/trade/order', {
+                'symbol': sym, 'side': close_side, 'positionSide': position_side,
+                'type': 'TRAILING_STOP_MARKET', 'quantity': qty,
+                'priceRate': str(TRAIL_PCT),
+                'workingType': 'MARK_PRICE',
+            })
+            if tsl_resp.get('code') == 0:
+                print(f"🔀 TSL order placed: {sym}  callback={TRAIL_PCT}%", flush=True)
+            else:
+                print(f"⚠️ TSL order failed ({sym}): {tsl_resp.get('msg')}", flush=True)
+        except Exception as _e:
+            print(f"⚠️ TSL order exception ({sym}): {_e}", flush=True)
+
     new_pos = {
         'token': token,
         'direction': direction,
@@ -966,6 +982,7 @@ def open_live_position(signal: dict, token: str, state: dict):
         'qty': qty,
         'tp': float(tp),
         'sl': float(sl),
+        'trail': float(TRAIL_PCT),
         'tp_price': actual_tp_price,
         'sl_price': actual_sl_price,
         'atr': float(signal.get('atr', 0)),
@@ -1396,62 +1413,6 @@ def _do_check_live_position():
 
                 dir_label = 'LONG' if is_long else 'SHORT'
                 print(f"💸 {dir_label} {sym_clean} @ ${current_price:,.4f}  P&L: {pnl_pct:+.2f}% (x{LIVE_LEVERAGE})", flush=True)
-
-                # === ТРЕЙЛИНГ-SL ===
-                if TRAIL_PCT > 0 and current_price > 0:
-                    best = pos.get('best_price', pos['entry_price'])
-                    # Обновляем best_price если цена улучшилась
-                    if is_long and current_price > best:
-                        pos['best_price'] = current_price
-                        best = current_price
-                        state_changed = True
-                    elif not is_long and current_price < best:
-                        pos['best_price'] = current_price
-                        best = current_price
-                        state_changed = True
-
-                    # Проверяем триггер TSL
-                    tsl_triggered = False
-                    if is_long and best > 0 and current_price <= best * (1 - TRAIL_PCT / 100):
-                        tsl_triggered = True
-                    elif not is_long and best > 0 and current_price >= best * (1 + TRAIL_PCT / 100):
-                        tsl_triggered = True
-
-                    if tsl_triggered:
-                        print(f"🔴 TSL triggered for {dir_label} {sym_clean}: best=${best:,.4f} cur=${current_price:,.4f}", flush=True)
-                        try:
-                            # Отменяем все открытые ордера (TP и др.)
-                            bingx_post_api('/openApi/swap/v2/trade/allOpenOrders', {
-                                'symbol': sym,
-                            })
-                        except Exception as _ce:
-                            print(f"⚠️ Cancel orders error ({sym}): {_ce}", flush=True)
-                        try:
-                            _close_side = 'SELL' if is_long else 'BUY'
-                            _pos_side   = 'LONG' if is_long else 'SHORT'
-                            close_resp = bingx_post_api('/openApi/swap/v2/trade/order', {
-                                'symbol': sym, 'side': _close_side, 'positionSide': _pos_side,
-                                'type': 'MARKET', 'quantity': pos['qty'],
-                            })
-                            if close_resp.get('code') == 0:
-                                print(f"✅ TSL closed {sym_clean}", flush=True)
-                                send_telegram(
-                                    f"🔴 <b>Трейлинг-SL сработал ({sym_clean})</b>\n"
-                                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                                    f"{'📈' if is_long else '📉'} {dir_label}  Вход: <b>${pos['entry_price']:,.4f}</b>\n"
-                                    f"🏆 Лучшая цена: <b>${best:,.4f}</b>\n"
-                                    f"📍 Цена закрытия: <b>${current_price:,.4f}</b>\n"
-                                    f"   P&L: <b>{'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%</b> (x{LIVE_LEVERAGE})\n"
-                                    f"⏰ {datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')}",
-                                    force=True
-                                )
-                                _close_single_position(pos, state)
-                                state_changed = True
-                                continue
-                            else:
-                                print(f"⚠️ TSL close failed ({sym}): {close_resp.get('msg')}", flush=True)
-                        except Exception as _te:
-                            print(f"⚠️ TSL close exception ({sym}): {_te}", flush=True)
 
                 still_open.append(pos)
 
