@@ -58,6 +58,7 @@ function computeTrade(
   leverage: number,
   positionPct: number,
   deposit: number,
+  feePct: number,
 ): ComputedTrade {
   const actualDir: "LONG" | "SHORT" =
     mode === "contrarian"
@@ -108,8 +109,13 @@ function computeTrade(
     ? (exitPrice - entry) / entry * 100
     : (entry - exitPrice) / entry * 100;
 
+  // Subtract open+close fee from the price move before leverage
+  // fee is applied on notional = margin × leverage, so as % of price move:
+  // fee_impact = 2 × feePct (entry + exit commission on full notional)
+  const rawPnlAfterFee = rawPnl - 2 * feePct;
+
   // Clamp to -100% (can't lose more than margin)
-  const rawPnlClamped = Math.max(rawPnl * leverage, -100);
+  const rawPnlClamped = Math.max(rawPnlAfterFee * leverage, -100);
   const pnlDeposit    = rawPnlClamped * (positionPct / 100);
   const pnlUSDT       = pnlDeposit * deposit / 100;
 
@@ -127,6 +133,7 @@ function runPortfolio(
     days: number; mode: "normal" | "contrarian"; tp: number; sl: number;
     horizon: number; leverage: number; positionPct: number;
     deposit: number; maxPositions: number; dirFilter: "all" | "LONG" | "SHORT";
+    feePct: number;
   }
 ): { trades: ComputedTrade[]; skippedCount: number } {
   const cutoff = Date.now() - opts.days * 24 * 60 * 60 * 1000;
@@ -167,7 +174,7 @@ function runPortfolio(
       if (i < available) {
         const trade = computeTrade(
           ranked[i], opts.mode, opts.tp, opts.sl, opts.horizon,
-          opts.leverage, opts.positionPct, opts.deposit
+          opts.leverage, opts.positionPct, opts.deposit, opts.feePct
         );
         // Close time = end of exit candle
         const closeTs = ranked[i].exits[trade.exitCandleIdx]?.t
@@ -263,6 +270,7 @@ export default function Backtest() {
   const [positionPct,  setPositionPct]  = useState(10);
   const [deposit,      setDeposit]      = useState(1000);
   const [maxPositions, setMaxPositions] = useState(5);
+  const [fee,          setFee]          = useState(0.05); // BingX taker 0.05%
   const [sortKey,      setSortKey]      = useState<SortKey>("ts");
   const [sortDir,      setSortDir]      = useState<SortDir>("desc");
   const [page,         setPage]         = useState(1);
@@ -271,9 +279,9 @@ export default function Backtest() {
   const { trades, skippedCount } = useMemo(() => {
     if (!data?.signals?.length) return { trades: [], skippedCount: 0 };
     return runPortfolio(data.signals, {
-      days, mode, tp, sl, horizon, leverage, positionPct, deposit, maxPositions, dirFilter,
+      days, mode, tp, sl, horizon, leverage, positionPct, deposit, maxPositions, dirFilter, feePct: fee,
     });
-  }, [data?.signals, days, mode, tp, sl, horizon, leverage, positionPct, deposit, maxPositions, dirFilter]);
+  }, [data?.signals, days, mode, tp, sl, horizon, leverage, positionPct, deposit, maxPositions, dirFilter, fee]);
 
   const sorted = useMemo(() => {
     return [...trades].sort((a, b) => {
@@ -421,8 +429,8 @@ export default function Backtest() {
             </div>
           </div>
 
-          {/* Row 2: TP / SL / Leverage / Position% / Deposit / MaxPos */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {/* Row 2: TP / SL / Leverage / Position% / Deposit / MaxPos / Fee */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
             <NumInput label="TP % от входа" value={tp} onChange={v => { setTp(v); setPage(1); }}
               min={0} max={500} step={0.5} suffix="%" placeholder="0 = выкл" />
             <NumInput label="SL % от входа" value={sl} onChange={v => { setSl(v); setPage(1); }}
@@ -435,6 +443,8 @@ export default function Backtest() {
               min={1} step={100} suffix="USDT" />
             <NumInput label="Макс. позиций" value={maxPositions} onChange={v => { setMaxPositions(Math.max(1, Math.min(50, v))); setPage(1); }}
               min={1} max={50} step={1} suffix="шт" />
+            <NumInput label="Комиссия (тейкер)" value={fee} onChange={v => { setFee(Math.max(0, v)); setPage(1); }}
+              min={0} max={1} step={0.01} suffix="%" />
           </div>
 
           {/* Info strip */}
@@ -447,13 +457,19 @@ export default function Backtest() {
                 {" "}· SL защищает если ближе к входу
               </div>
             )}
-            <div className="flex items-center gap-3 text-xs font-mono bg-primary/5 border border-primary/20 rounded px-3 py-1.5 flex-1">
+            <div className="flex items-center gap-3 text-xs font-mono bg-primary/5 border border-primary/20 rounded px-3 py-1.5 flex-1 flex-wrap">
               <BarChart3 className="w-3.5 h-3.5 text-primary shrink-0" />
               <span className="text-muted-foreground">Маржа/сделка:</span>
               <span className="text-primary font-bold">${(deposit * positionPct / 100).toFixed(2)}</span>
               <span className="text-muted-foreground">·</span>
               <span className="text-muted-foreground">Объём:</span>
               <span className="text-foreground font-bold">${(deposit * positionPct / 100 * leverage).toFixed(2)}</span>
+              <span className="text-muted-foreground">·</span>
+              <span className="text-muted-foreground">Комиссия/сделка:</span>
+              <span className="text-yellow-400 font-bold">
+                -${(deposit * positionPct / 100 * leverage * 2 * fee / 100).toFixed(3)}
+              </span>
+              <span className="text-muted-foreground text-[10px]">({(2 * fee * leverage).toFixed(2)}% маржи)</span>
               <span className="text-muted-foreground">·</span>
               <span className="text-muted-foreground">Макс. в рынке:</span>
               <span className="text-foreground font-bold">${(deposit * positionPct / 100 * maxPositions).toFixed(2)}</span>
