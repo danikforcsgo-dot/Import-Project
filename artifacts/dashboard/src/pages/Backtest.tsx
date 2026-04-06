@@ -84,23 +84,23 @@ function computeTrade(
 
   for (let i = 0; i < candles.length; i++) {
     const c = candles[i];
-    // 1. Check liquidation first (most extreme stop)
+    // 1. TP
+    if (tpPrice !== null) {
+      const hit = actualDir === "LONG" ? c.h >= tpPrice : c.l <= tpPrice;
+      if (hit) { exitPrice = tpPrice; exitReason = "TP"; exitCandleIdx = i; break; }
+    }
+    // 2. SL — проверяем ДО ликвидации, т.к. SL ближе к входу
+    if (slPrice !== null) {
+      const hit = actualDir === "LONG" ? c.l <= slPrice : c.h >= slPrice;
+      if (hit) { exitPrice = slPrice; exitReason = "SL"; exitCandleIdx = i; break; }
+    }
+    // 3. Ликвидация — только если SL не задан или не сработал
     const liqHit = actualDir === "LONG"
       ? c.l <= liqPriceLong
       : c.h >= liqPriceShort;
     if (liqHit) {
       exitPrice = actualDir === "LONG" ? liqPriceLong : liqPriceShort;
       exitReason = "LIQ"; exitCandleIdx = i; break;
-    }
-    // 2. TP
-    if (tpPrice !== null) {
-      const hit = actualDir === "LONG" ? c.h >= tpPrice : c.l <= tpPrice;
-      if (hit) { exitPrice = tpPrice; exitReason = "TP"; exitCandleIdx = i; break; }
-    }
-    // 3. SL
-    if (slPrice !== null) {
-      const hit = actualDir === "LONG" ? c.l <= slPrice : c.h >= slPrice;
-      if (hit) { exitPrice = slPrice; exitReason = "SL"; exitCandleIdx = i; break; }
     }
   }
 
