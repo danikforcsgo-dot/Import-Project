@@ -482,9 +482,9 @@ export default function Backtest() {
           {/* Row 2: TP / SL / Trail / Leverage / Position% / Deposit / MaxPos / Fee */}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
             <NumInput label="TP % от входа" value={tp} onChange={v => { setTp(v); setPage(1); }}
-              min={0} max={500} step={0.5} suffix="%" placeholder="0 = выкл" />
+              min={0} max={500} step={0.1} suffix="%" placeholder="0 = выкл" />
             <NumInput label="Фикс. SL %" value={sl} onChange={v => { setSl(v); setPage(1); }}
-              min={0} max={100} step={0.5} suffix="%" placeholder="0 = выкл" />
+              min={0} max={100} step={0.1} suffix="%" placeholder="0 = выкл" />
             <div className="relative">
               <NumInput label="Трейлинг SL %" value={trail} onChange={v => { setTrail(v); setPage(1); }}
                 min={0} max={100} step={0.25} suffix="%" placeholder="0 = выкл" />
