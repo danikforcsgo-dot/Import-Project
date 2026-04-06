@@ -437,15 +437,28 @@ export default function Backtest() {
               min={1} max={50} step={1} suffix="шт" />
           </div>
 
-          {/* Liq info */}
-          {leverage > 0 && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono bg-orange-500/5 border border-orange-500/20 rounded px-3 py-1.5">
-              <Zap className="w-3.5 h-3.5 text-orange-400 shrink-0" />
-              Ликвидация при движении цены против позиции на{" "}
-              <span className="text-orange-400 font-bold">{(100 / leverage).toFixed(2)}%</span>
-              {" "}· SL/TP проверяются intrabar по high/low
+          {/* Info strip */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            {leverage > 0 && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono bg-orange-500/5 border border-orange-500/20 rounded px-3 py-1.5 flex-1">
+                <Zap className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                Ликвидация при движении против позиции на{" "}
+                <span className="text-orange-400 font-bold">{(100 / leverage).toFixed(2)}%</span>
+                {" "}· SL защищает если ближе к входу
+              </div>
+            )}
+            <div className="flex items-center gap-3 text-xs font-mono bg-primary/5 border border-primary/20 rounded px-3 py-1.5 flex-1">
+              <BarChart3 className="w-3.5 h-3.5 text-primary shrink-0" />
+              <span className="text-muted-foreground">Маржа/сделка:</span>
+              <span className="text-primary font-bold">${(deposit * positionPct / 100).toFixed(2)}</span>
+              <span className="text-muted-foreground">·</span>
+              <span className="text-muted-foreground">Объём:</span>
+              <span className="text-foreground font-bold">${(deposit * positionPct / 100 * leverage).toFixed(2)}</span>
+              <span className="text-muted-foreground">·</span>
+              <span className="text-muted-foreground">Макс. в рынке:</span>
+              <span className="text-foreground font-bold">${(deposit * positionPct / 100 * maxPositions).toFixed(2)}</span>
             </div>
-          )}
+          </div>
         </motion.div>
 
         {/* Stats */}
