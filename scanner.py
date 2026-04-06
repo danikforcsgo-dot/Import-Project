@@ -152,13 +152,17 @@ MAX_DCA_ENTRIES     = 10    # максимум 10 DCA-входов
 DCA_MIN_INTERVAL    = 3600  # минимум 1 час между DCA-входами (анти-спам)
 DCA_LOSS_PCT        = 0.20  # DCA срабатывает когда убыток >= 20% от залога позиции
                             # (при 15х плечо = ~1% движение цены против позиции)
-MAX_POSITIONS      = 10    # максимум одновременно открытых позиций
-MAX_SIGNALS_TO_OPEN = 5   # открываем только N лучших по рейтингу сигналов за скан
+MAX_POSITIONS      = 4     # максимум одновременно открытых позиций
+MAX_SIGNALS_TO_OPEN = 4   # открываем только N лучших по рейтингу сигналов за скан
+
+# === TP / SL ===
+TP_PCT = 0.5   # Take-Profit: 0.5% от цены входа (0 — выключен)
+SL_PCT = 0.5   # Stop-Loss:   0.5% от цены входа (0 — выключен)
 
 # === КОНТРАРНЫЙ РЕЖИМ ===
 # True  — открываем ПРОТИВ сигнала: сигнал LONG → открываем SHORT (и наоборот)
 # False — открываем ПО сигналу (стандартный режим)
-CONTRARIAN_MODE    = True
+CONTRARIAN_MODE    = False
 
 # === ПОДКЛЮЧЕНИЕ К BINGX ===
 exchange = ccxt.bingx({
@@ -416,8 +420,8 @@ def check_signal(symbol):
                 'adx': float(last['adx']),
                 'atr': float(last['atr']),
                 'rsi': float(last['rsi']),
-                'sl': 0.0,
-                'tp': 0.0,
+                'sl': SL_PCT,
+                'tp': TP_PCT,
                 'candle_timestamp': int(last['timestamp'])
             }
 
@@ -434,8 +438,8 @@ def check_signal(symbol):
                 'adx': float(last['adx']),
                 'atr': float(last['atr']),
                 'rsi': float(last['rsi']),
-                'sl': 0.0,
-                'tp': 0.0,
+                'sl': SL_PCT,
+                'tp': TP_PCT,
                 'candle_timestamp': int(last['timestamp'])
             }
 
@@ -900,12 +904,34 @@ def open_live_position(signal: dict, token: str, state: dict):
         print(f"⚠️ Qty calculated as {qty} — skipping", flush=True)
         return
 
+    # Вычисляем абсолютные цены TP / SL
+    import json as _json
+    tp_price = round(entry * (1 + tp / 100), 8) if (is_long and tp > 0) \
+          else round(entry * (1 - tp / 100), 8) if (not is_long and tp > 0) else None
+    sl_price = round(entry * (1 - sl / 100), 8) if (is_long and sl > 0) \
+          else round(entry * (1 + sl / 100), 8) if (not is_long and sl > 0) else None
+
+    order_body = {
+        'symbol': sym, 'side': order_side, 'positionSide': position_side,
+        'type': 'MARKET', 'quantity': qty,
+    }
+    if tp_price:
+        order_body['takeProfit'] = _json.dumps({
+            'type': 'TAKE_PROFIT_MARKET',
+            'stopPrice': tp_price,
+            'price': tp_price,
+            'workingType': 'MARK_PRICE',
+        })
+    if sl_price:
+        order_body['stopLoss'] = _json.dumps({
+            'type': 'STOP_MARKET',
+            'stopPrice': sl_price,
+            'workingType': 'MARK_PRICE',
+        })
+
     # Открываем рыночный ордер
     try:
-        order_resp = bingx_post_api('/openApi/swap/v2/trade/order', {
-            'symbol': sym, 'side': order_side, 'positionSide': position_side,
-            'type': 'MARKET', 'quantity': qty,
-        })
+        order_resp = bingx_post_api('/openApi/swap/v2/trade/order', order_body)
         if order_resp.get('code') != 0:
             msg = order_resp.get('msg', 'Unknown error')
             print(f"❌ BingX order failed: {msg}", flush=True)
@@ -920,6 +946,12 @@ def open_live_position(signal: dict, token: str, state: dict):
     if state['initial_balance'] == 0:
         state['initial_balance'] = balance
 
+    # Пересчитываем TP/SL по фактической цене входа
+    actual_tp_price = round(actual_entry * (1 + tp / 100), 8) if (is_long and tp > 0) \
+                 else round(actual_entry * (1 - tp / 100), 8) if (not is_long and tp > 0) else None
+    actual_sl_price = round(actual_entry * (1 - sl / 100), 8) if (is_long and sl > 0) \
+                 else round(actual_entry * (1 + sl / 100), 8) if (not is_long and sl > 0) else None
+
     new_pos = {
         'token': token,
         'direction': direction,
@@ -927,6 +959,8 @@ def open_live_position(signal: dict, token: str, state: dict):
         'qty': qty,
         'tp': float(tp),
         'sl': float(sl),
+        'tp_price': actual_tp_price,
+        'sl_price': actual_sl_price,
         'atr': float(signal.get('atr', 0)),
         'adx': float(signal.get('adx', 0)),
         'best_price': actual_entry,
@@ -945,19 +979,22 @@ def open_live_position(signal: dict, token: str, state: dict):
 
     sym_clean = token.replace('/USDT:USDT', '').replace('/USDC:USDC', '')
     dir_emoji = '🟢 ЛОНГ' if is_long else '🔴 ШОРТ'
-    contrarian_label = ' 🔄 КОНТР' if CONTRARIAN_MODE else ''
+    tp_str = f"${actual_tp_price:,.4f}  (+{tp:.1f}%)" if actual_tp_price else "—"
+    sl_str = f"${actual_sl_price:,.4f}  (-{sl:.1f}%)" if actual_sl_price else "—"
     msg = (
-        f"{dir_emoji}{contrarian_label} <b>РЕАЛЬНАЯ ПОЗИЦИЯ ОТКРЫТА 💸</b>\n"
+        f"{dir_emoji} <b>РЕАЛЬНАЯ ПОЗИЦИЯ ОТКРЫТА 💸</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📊 Токен:    <b>{sym_clean}</b>\n"
         f"💰 Вход:     <b>${actual_entry:,.4f}</b>\n"
+        f"🎯 TP:       <b>{tp_str}</b>\n"
+        f"🛑 SL:       <b>{sl_str}</b>\n"
         f"📦 Залог:    ${collateral_used:,.2f} USDT  (x{LIVE_LEVERAGE} = ${position_value:,.2f})\n"
         f"💼 Баланс:   ${balance:,.2f}\n"
         f"🔢 Вход:     1 / {MAX_DCA_ENTRIES} (DCA)\n"
         f"⏰ {datetime.now(TZ_MOSCOW).strftime('%H:%M  %d.%m.%Y')}"
     )
     send_telegram(msg, force=True)
-    print(f"💸 Live {direction} opened: {sym} @ ${actual_entry:,.4f}  [DCA 1/{MAX_DCA_ENTRIES}]", flush=True)
+    print(f"💸 Live {direction} opened: {sym} @ ${actual_entry:,.4f}  TP={tp_str}  SL={sl_str}  [DCA 1/{MAX_DCA_ENTRIES}]", flush=True)
 
 
 def _dca_single_position(pos: dict, state: dict) -> bool:
