@@ -23,7 +23,7 @@ interface ComputedTrade {
   pnlDeposit: number;   // % of deposit
   pnlUSDT: number;      // in USDT
   exitPrice: number;
-  exitReason: "TP" | "SL" | "LIQ" | "TIME";
+  exitReason: "TP" | "SL" | "TSL" | "LIQ" | "TIME";
   exitCandleIdx: number;
   skipped: false;
 }
@@ -54,6 +54,7 @@ function computeTrade(
   mode: "normal" | "contrarian",
   tpPct: number,
   slPct: number,
+  trailPct: number,
   horizonCandles: number,
   leverage: number,
   positionPct: number,
@@ -80,22 +81,43 @@ function computeTrade(
 
   const candles = signal.exits.slice(0, horizonCandles);
   let exitPrice = candles.length > 0 ? candles[candles.length - 1].c : entry;
-  let exitReason: "TP" | "SL" | "LIQ" | "TIME" = "TIME";
+  let exitReason: "TP" | "SL" | "TSL" | "LIQ" | "TIME" = "TIME";
   let exitCandleIdx = candles.length - 1;
+
+  // Trailing SL — tracks best price seen since entry
+  let bestPrice = entry;
 
   for (let i = 0; i < candles.length; i++) {
     const c = candles[i];
-    // 1. TP
+
+    // 1. TP — check first (most optimistic)
     if (tpPrice !== null) {
       const hit = actualDir === "LONG" ? c.h >= tpPrice : c.l <= tpPrice;
       if (hit) { exitPrice = tpPrice; exitReason = "TP"; exitCandleIdx = i; break; }
     }
-    // 2. SL — проверяем ДО ликвидации, т.к. SL ближе к входу
+
+    // 2. Update bestPrice with this candle's favorable extreme (after TP check)
+    if (trailPct > 0) {
+      if (actualDir === "LONG")  bestPrice = Math.max(bestPrice, c.h);
+      else                       bestPrice = Math.min(bestPrice, c.l);
+    }
+
+    // 3. Trailing SL — trails behind bestPrice
+    if (trailPct > 0) {
+      const tslPrice = actualDir === "LONG"
+        ? bestPrice * (1 - trailPct / 100)
+        : bestPrice * (1 + trailPct / 100);
+      const hit = actualDir === "LONG" ? c.l <= tslPrice : c.h >= tslPrice;
+      if (hit) { exitPrice = tslPrice; exitReason = "TSL"; exitCandleIdx = i; break; }
+    }
+
+    // 4. Fixed SL — защита если трейлинг выключен или SL задан отдельно
     if (slPrice !== null) {
       const hit = actualDir === "LONG" ? c.l <= slPrice : c.h >= slPrice;
       if (hit) { exitPrice = slPrice; exitReason = "SL"; exitCandleIdx = i; break; }
     }
-    // 3. Ликвидация — только если SL не задан или не сработал
+
+    // 5. Ликвидация
     const liqHit = actualDir === "LONG"
       ? c.l <= liqPriceLong
       : c.h >= liqPriceShort;
@@ -130,7 +152,7 @@ function computeTrade(
 function runPortfolio(
   allSignals: RawSignal[],
   opts: {
-    days: number; mode: "normal" | "contrarian"; tp: number; sl: number;
+    days: number; mode: "normal" | "contrarian"; tp: number; sl: number; trail: number;
     horizon: number; leverage: number; positionPct: number;
     deposit: number; maxPositions: number; dirFilter: "all" | "LONG" | "SHORT";
     feePct: number;
@@ -196,7 +218,7 @@ function runPortfolio(
     for (let i = 0; i < ranked.length; i++) {
       if (i < available) {
         const trade = computeTrade(
-          ranked[i], opts.mode, opts.tp, opts.sl, opts.horizon,
+          ranked[i], opts.mode, opts.tp, opts.sl, opts.trail, opts.horizon,
           opts.leverage, opts.positionPct, opts.deposit, opts.feePct
         );
         const closeTs = ranked[i].exits[trade.exitCandleIdx]?.t
@@ -297,6 +319,7 @@ export default function Backtest() {
   const [positionPct,  setPositionPct]  = useState(10);
   const [deposit,      setDeposit]      = useState(1000);
   const [maxPositions, setMaxPositions] = useState(4);
+  const [trail,        setTrail]        = useState(0);   // trailing SL %
   const [fee,          setFee]          = useState(0.05); // BingX taker 0.05%
   const [sortKey,      setSortKey]      = useState<SortKey>("ts");
   const [sortDir,      setSortDir]      = useState<SortDir>("desc");
@@ -306,9 +329,9 @@ export default function Backtest() {
   const { trades, skippedCount, finalBalance, minBalance } = useMemo(() => {
     if (!data?.signals?.length) return { trades: [], skippedCount: 0, finalBalance: deposit, minBalance: deposit };
     return runPortfolio(data.signals, {
-      days, mode, tp, sl, horizon, leverage, positionPct, deposit, maxPositions, dirFilter, feePct: fee,
+      days, mode, tp, sl, trail, horizon, leverage, positionPct, deposit, maxPositions, dirFilter, feePct: fee,
     });
-  }, [data?.signals, days, mode, tp, sl, horizon, leverage, positionPct, deposit, maxPositions, dirFilter, fee]);
+  }, [data?.signals, days, mode, tp, sl, trail, horizon, leverage, positionPct, deposit, maxPositions, dirFilter, fee]);
 
   const sorted = useMemo(() => {
     return [...trades].sort((a, b) => {
@@ -340,6 +363,7 @@ export default function Backtest() {
     const liqs    = trades.filter(t => t.exitReason === "LIQ").length;
     const byTp    = trades.filter(t => t.exitReason === "TP").length;
     const bySl    = trades.filter(t => t.exitReason === "SL").length;
+    const byTsl   = trades.filter(t => t.exitReason === "TSL").length;
     const sumDep  = pnlsDep.reduce((a, b) => a + b, 0);
     return {
       total: trades.length, wins, skipped: skippedCount,
@@ -347,7 +371,7 @@ export default function Backtest() {
       avgDep: sumDep / trades.length,
       sumDep,
       best: Math.max(...pnlsDep), worst: Math.min(...pnlsDep),
-      liqs, byTp, bySl, byTime: trades.length - byTp - bySl - liqs,
+      liqs, byTp, bySl, byTsl, byTime: trades.length - byTp - bySl - byTsl - liqs,
     };
   }, [trades, skippedCount]);
 
@@ -453,12 +477,19 @@ export default function Backtest() {
             </div>
           </div>
 
-          {/* Row 2: TP / SL / Leverage / Position% / Deposit / MaxPos / Fee */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+          {/* Row 2: TP / SL / Trail / Leverage / Position% / Deposit / MaxPos / Fee */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
             <NumInput label="TP % от входа" value={tp} onChange={v => { setTp(v); setPage(1); }}
               min={0} max={500} step={0.5} suffix="%" placeholder="0 = выкл" />
-            <NumInput label="SL % от входа" value={sl} onChange={v => { setSl(v); setPage(1); }}
+            <NumInput label="Фикс. SL %" value={sl} onChange={v => { setSl(v); setPage(1); }}
               min={0} max={100} step={0.5} suffix="%" placeholder="0 = выкл" />
+            <div className="relative">
+              <NumInput label="Трейлинг SL %" value={trail} onChange={v => { setTrail(v); setPage(1); }}
+                min={0} max={100} step={0.25} suffix="%" placeholder="0 = выкл" />
+              {trail > 0 && (
+                <span className="absolute -top-0.5 right-0 text-[9px] font-bold text-purple-400 bg-purple-500/10 rounded px-1">TSL</span>
+              )}
+            </div>
             <NumInput label="Плечо" value={leverage} onChange={v => { setLeverage(Math.max(1, v)); setPage(1); }}
               min={1} max={100} step={1} suffix="×" />
             <NumInput label="Размер позиции" value={positionPct} onChange={v => { setPositionPct(Math.max(1, v)); setPage(1); }}
@@ -521,7 +552,7 @@ export default function Backtest() {
             <StatCard label="Мин. баланс" value={`$${minBalance.toFixed(0)}`}
               sub="просадка" positive={minBalance >= deposit} />
             <StatCard label="Ликвидаций" value={String(stats.liqs)}
-              sub={`TP:${stats.byTp} SL:${stats.bySl} T:${stats.byTime}`}
+              sub={`TP:${stats.byTp} SL:${stats.bySl} TSL:${stats.byTsl} T:${stats.byTime}`}
               positive={stats.liqs === 0} />
           </motion.div>
         )}
@@ -598,10 +629,12 @@ export default function Backtest() {
                             <span className={cn("px-1.5 py-0.5 rounded text-xs",
                               t.exitReason === "TP"  ? "bg-green-500/10 text-green-400"
                               : t.exitReason === "SL"  ? "bg-red-500/10 text-red-400"
+                              : t.exitReason === "TSL" ? "bg-purple-500/15 text-purple-400"
                               : t.exitReason === "LIQ" ? "bg-orange-500/20 text-orange-400 font-bold"
                               : "bg-muted/50 text-muted-foreground")}>
-                              {t.exitReason === "TP" ? "✅ TP"
-                                : t.exitReason === "SL" ? "🛑 SL"
+                              {t.exitReason === "TP"  ? "✅ TP"
+                                : t.exitReason === "SL"  ? "🛑 SL"
+                                : t.exitReason === "TSL" ? "🔵 TSL"
                                 : t.exitReason === "LIQ" ? "⚡ LIQ"
                                 : `⏱ ${(t.exitCandleIdx + 1) * 4}ч`}
                             </span>
