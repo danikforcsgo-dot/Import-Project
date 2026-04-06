@@ -5,6 +5,7 @@ import scannerRouter from "./scanner";
 import tradingRouter from "./trading";
 import bingxBalanceRouter from "./bingx-balance";
 import telegramRouter from "./telegram";
+import backtestRouter from "./backtest";
 
 const router: IRouter = Router();
 
@@ -14,5 +15,6 @@ router.use(scannerRouter);
 router.use(tradingRouter);
 router.use(bingxBalanceRouter);
 router.use(telegramRouter);
+router.use(backtestRouter);
 
 export default router;
