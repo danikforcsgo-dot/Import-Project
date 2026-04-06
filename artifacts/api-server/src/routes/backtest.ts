@@ -109,7 +109,7 @@ async function fetchKlines(sym: string): Promise<Candle[]> {
     h: parseFloat(String(k.high ?? k.h ?? 0)),
     l: parseFloat(String(k.low  ?? k.l ?? 0)),
     c: parseFloat(String(k.close ?? k.c ?? 0)),
-  })).filter(c => c.t > 0 && c.c > 0);
+  })).filter(c => c.t > 0 && c.c > 0).sort((a, b) => a.t - b.t);
 }
 
 async function computeSignals(): Promise<BacktestSignal[]> {
