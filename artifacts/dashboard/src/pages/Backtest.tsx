@@ -126,7 +126,7 @@ function computeTrade(
   };
 }
 
-// ─── Portfolio simulation (respects maxPositions) ─────────────────────────────
+// ─── Portfolio simulation (respects maxPositions + available margin) ──────────
 function runPortfolio(
   allSignals: RawSignal[],
   opts: {
@@ -135,7 +135,7 @@ function runPortfolio(
     deposit: number; maxPositions: number; dirFilter: "all" | "LONG" | "SHORT";
     feePct: number;
   }
-): { trades: ComputedTrade[]; skippedCount: number } {
+): { trades: ComputedTrade[]; skippedCount: number; finalBalance: number; minBalance: number } {
   const cutoff = Date.now() - opts.days * 24 * 60 * 60 * 1000;
   const filtered = allSignals
     .filter(s => s.ts >= cutoff && (opts.dirFilter === "all" || s.direction === opts.dirFilter))
@@ -149,24 +149,47 @@ function runPortfolio(
     groups.set(s.ts, grp);
   }
 
-  // Open trades: [{closeTs}]
-  const openSlots: number[] = [];  // stores close timestamps
+  // Fixed margin per trade based on initial deposit
+  const marginPerTrade = opts.deposit * opts.positionPct / 100;
+
+  // Track open positions: closeTs + PnL to realize when closed
+  const openTrades: { closeTs: number; pnlUSDT: number }[] = [];
   const trades: ComputedTrade[] = [];
   let skippedCount = 0;
+  let realizedPnl = 0;
+  let minBalance = opts.deposit;
 
   const sortedTs = Array.from(groups.keys()).sort((a, b) => a - b);
 
   for (const ts of sortedTs) {
     const group = groups.get(ts)!;
-    // Entry is at beginning of next candle
     const entryTs = ts + CANDLE_MS;
 
-    // Remove slots that closed before this entry
-    for (let i = openSlots.length - 1; i >= 0; i--) {
-      if (openSlots[i] <= entryTs) openSlots.splice(i, 1);
+    // Close trades that expired before this entry → realize their PnL
+    for (let i = openTrades.length - 1; i >= 0; i--) {
+      if (openTrades[i].closeTs <= entryTs) {
+        realizedPnl += openTrades[i].pnlUSDT;
+        openTrades.splice(i, 1);
+      }
     }
 
-    const available = opts.maxPositions - openSlots.length;
+    const currentBalance = opts.deposit + realizedPnl;
+    const lockedMargin   = openTrades.length * marginPerTrade;
+    const freeMargin     = currentBalance - lockedMargin;
+
+    minBalance = Math.min(minBalance, currentBalance);
+
+    // Skip if balance is wiped out
+    if (currentBalance <= 0 || marginPerTrade <= 0) {
+      skippedCount += group.length;
+      continue;
+    }
+
+    // How many new positions can we open?
+    const bySlots  = opts.maxPositions - openTrades.length;          // hard cap
+    const byMargin = Math.floor(freeMargin / marginPerTrade);         // margin cap
+    const available = Math.max(0, Math.min(bySlots, byMargin));
+
     // Sort group by ADX desc (take best signals first)
     const ranked = [...group].sort((a, b) => b.adx - a.adx);
 
@@ -176,11 +199,10 @@ function runPortfolio(
           ranked[i], opts.mode, opts.tp, opts.sl, opts.horizon,
           opts.leverage, opts.positionPct, opts.deposit, opts.feePct
         );
-        // Close time = end of exit candle
         const closeTs = ranked[i].exits[trade.exitCandleIdx]?.t
           ? ranked[i].exits[trade.exitCandleIdx].t + CANDLE_MS
           : entryTs + (trade.exitCandleIdx + 1) * CANDLE_MS;
-        openSlots.push(closeTs);
+        openTrades.push({ closeTs, pnlUSDT: trade.pnlUSDT });
         trades.push(trade);
       } else {
         skippedCount++;
@@ -188,7 +210,12 @@ function runPortfolio(
     }
   }
 
-  return { trades, skippedCount };
+  // Realize remaining open trades
+  for (const t of openTrades) realizedPnl += t.pnlUSDT;
+  const finalBalance = opts.deposit + realizedPnl;
+  minBalance = Math.min(minBalance, finalBalance);
+
+  return { trades, skippedCount, finalBalance, minBalance };
 }
 
 // ─── API hook ─────────────────────────────────────────────────────────────────
@@ -276,8 +303,8 @@ export default function Backtest() {
   const [page,         setPage]         = useState(1);
   const PAGE_SIZE = 50;
 
-  const { trades, skippedCount } = useMemo(() => {
-    if (!data?.signals?.length) return { trades: [], skippedCount: 0 };
+  const { trades, skippedCount, finalBalance, minBalance } = useMemo(() => {
+    if (!data?.signals?.length) return { trades: [], skippedCount: 0, finalBalance: deposit, minBalance: deposit };
     return runPortfolio(data.signals, {
       days, mode, tp, sl, horizon, leverage, positionPct, deposit, maxPositions, dirFilter, feePct: fee,
     });
@@ -308,24 +335,21 @@ export default function Backtest() {
   // ── Stats ──
   const stats = useMemo(() => {
     if (!trades.length) return null;
-    const pnlsDep  = trades.map(t => t.pnlDeposit);
-    const pnlsUSDT = trades.map(t => t.pnlUSDT);
-    const wins     = trades.filter(t => t.pnlDeposit > 0).length;
-    const liqs     = trades.filter(t => t.exitReason === "LIQ").length;
-    const byTp     = trades.filter(t => t.exitReason === "TP").length;
-    const bySl     = trades.filter(t => t.exitReason === "SL").length;
-    const sumDep   = pnlsDep.reduce((a, b) => a + b, 0);
-    const sumUSDT  = pnlsUSDT.reduce((a, b) => a + b, 0);
-    const finalDep = deposit + sumUSDT;
+    const pnlsDep = trades.map(t => t.pnlDeposit);
+    const wins    = trades.filter(t => t.pnlDeposit > 0).length;
+    const liqs    = trades.filter(t => t.exitReason === "LIQ").length;
+    const byTp    = trades.filter(t => t.exitReason === "TP").length;
+    const bySl    = trades.filter(t => t.exitReason === "SL").length;
+    const sumDep  = pnlsDep.reduce((a, b) => a + b, 0);
     return {
       total: trades.length, wins, skipped: skippedCount,
       winRate: wins / trades.length * 100,
       avgDep: sumDep / trades.length,
-      sumDep, sumUSDT, finalDep,
+      sumDep,
       best: Math.max(...pnlsDep), worst: Math.min(...pnlsDep),
       liqs, byTp, bySl, byTime: trades.length - byTp - bySl - liqs,
     };
-  }, [trades, skippedCount, deposit]);
+  }, [trades, skippedCount]);
 
   const horizonLabel: Record<number, string> = { 1: "4ч", 2: "8ч", 3: "12ч", 4: "16ч", 6: "24ч" };
   const loading = isLoading || refreshMut.isPending;
@@ -471,8 +495,9 @@ export default function Backtest() {
               </span>
               <span className="text-muted-foreground text-[10px]">({(2 * fee * leverage).toFixed(2)}% маржи)</span>
               <span className="text-muted-foreground">·</span>
-              <span className="text-muted-foreground">Макс. в рынке:</span>
+              <span className="text-muted-foreground">Макс. в рынке (по лимиту):</span>
               <span className="text-foreground font-bold">${(deposit * positionPct / 100 * maxPositions).toFixed(2)}</span>
+              <span className="text-muted-foreground text-[10px]">· по марже: {Math.floor(deposit / (deposit * positionPct / 100))} поз.</span>
             </div>
           </div>
         </motion.div>
@@ -489,11 +514,12 @@ export default function Backtest() {
               sub="% депо / сделка" positive={stats.avgDep >= 0} />
             <StatCard label="Сумм. PnL %" value={fmtP(stats.sumDep, 1)}
               sub="% от депо" positive={stats.sumDep >= 0} />
-            <StatCard label="Сумм. PnL $" value={fmtU(stats.sumUSDT)}
-              sub="USDT" positive={stats.sumUSDT >= 0} />
-            <StatCard label="Итог депозит" value={`$${stats.finalDep.toFixed(0)}`}
-              sub={`старт $${deposit}`} positive={stats.finalDep >= deposit} />
-            <StatCard label="Лучшая" value={fmtP(stats.best)} positive={true} />
+            <StatCard label="Сумм. PnL $" value={fmtU(finalBalance - deposit)}
+              sub="USDT" positive={finalBalance >= deposit} />
+            <StatCard label="Итог депозит" value={`$${finalBalance.toFixed(0)}`}
+              sub={`старт $${deposit}`} positive={finalBalance >= deposit} />
+            <StatCard label="Мин. баланс" value={`$${minBalance.toFixed(0)}`}
+              sub="просадка" positive={minBalance >= deposit} />
             <StatCard label="Ликвидаций" value={String(stats.liqs)}
               sub={`TP:${stats.byTp} SL:${stats.bySl} T:${stats.byTime}`}
               positive={stats.liqs === 0} />
