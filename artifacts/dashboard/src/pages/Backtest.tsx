@@ -288,15 +288,15 @@ export default function Backtest() {
 
   // ── Filters ──
   const [days,         setDays]         = useState<7 | 14 | 30>(30);
-  const [mode,         setMode]         = useState<"normal" | "contrarian">("contrarian");
-  const [tp,           setTp]           = useState(0);
-  const [sl,           setSl]           = useState(0);
+  const [mode,         setMode]         = useState<"normal" | "contrarian">("normal");
+  const [tp,           setTp]           = useState(0.5);
+  const [sl,           setSl]           = useState(0.5);
   const [horizon,      setHorizon]      = useState(4);
   const [dirFilter,    setDirFilter]    = useState<"all" | "LONG" | "SHORT">("all");
   const [leverage,     setLeverage]     = useState(15);
   const [positionPct,  setPositionPct]  = useState(10);
   const [deposit,      setDeposit]      = useState(1000);
-  const [maxPositions, setMaxPositions] = useState(5);
+  const [maxPositions, setMaxPositions] = useState(4);
   const [fee,          setFee]          = useState(0.05); // BingX taker 0.05%
   const [sortKey,      setSortKey]      = useState<SortKey>("ts");
   const [sortDir,      setSortDir]      = useState<SortDir>("desc");
